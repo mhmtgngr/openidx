@@ -888,3 +888,18 @@ func maskEmail(email string) string {
 	}
 	return string(email[0]) + "***" + email[at:]
 }
+
+// SMSFactorAvailable reports whether the SMS factor can really be used: a
+// provider is wired and, when it can say so (sms.Service.Ready), sending is
+// enabled with a non-mock provider. Surfaces that offer SMS enrolment check
+// this so they never offer a factor that would answer ErrSMSMFANotConfigured.
+func (s *Service) SMSFactorAvailable() bool {
+	p := s.getSMSProvider()
+	if p == nil {
+		return false
+	}
+	if r, ok := p.(interface{ Ready() bool }); ok {
+		return r.Ready()
+	}
+	return true
+}

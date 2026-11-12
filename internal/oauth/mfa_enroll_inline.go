@@ -3,6 +3,7 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,14 +49,20 @@ const (
 	ctxEnrollBackupCodes = "mfa_enroll_backup_codes"
 )
 
-// inlineEnrollableMethods are the factors the login page can set up itself.
+// inlineEnrollableMethods are the factors the login page can set up itself
+// with no further precondition. These are also what a policy naming no method
+// is offered.
 var inlineEnrollableMethods = []string{"totp", "webauthn"}
+
+// inlineEnrollableSMS is offered on top of inlineEnrollableMethods only when
+// the policy names it and the SMS factor is really deliverable
+// (identity.Service.SMSFactorAvailable: enabled, non-mock provider).
 
 // mfaEnrollSessionInternal are the session fields that are not part of the
 // pending authorization request.
 var mfaEnrollSessionInternal = map[string]bool{
 	"user_id": true, "mode": true, "allowed_methods": true, "auth_method": true,
-	"attempts": true, "totp_secret": true, "user_type": true,
+	"attempts": true, "totp_secret": true, "sms_started": true, "user_type": true,
 	"risk_score": true, "fingerprint": true, "location": true,
 }
 
@@ -67,14 +74,16 @@ func (s *Service) inlineEnrollmentEnabled() bool {
 // inlineEnrollMethods is the list an enrol session offers: what the policy
 // requires (any strong-enough factor when it names none), held to what the
 // page can enrol, and for an external user to externalid.FactorAllowed.
-func inlineEnrollMethods(ev mfaEvaluation, userType string) []string {
+// sms is offered only when smsAvailable is true.
+func inlineEnrollMethods(ev mfaEvaluation, userType string, smsAvailable bool) []string {
 	required := ev.RequiredMethods
 	if len(required) == 0 {
 		required = inlineEnrollableMethods
 	}
 	out := []string{}
 	for _, m := range required {
-		if !hasMethod(inlineEnrollableMethods, m) || hasMethod(out, m) {
+		enrollable := hasMethod(inlineEnrollableMethods, m) || (m == "sms" && smsAvailable)
+		if !enrollable || hasMethod(out, m) {
 			continue
 		}
 		if ev.External && !externalid.FactorAllowed(externalid.TypeExternal, m) {
@@ -97,7 +106,7 @@ func (s *Service) offerInlineEnrollment(ctx context.Context, user *identity.User
 	if !ev.EnrollmentRequired || user == nil || oauthParams == nil || !s.inlineEnrollmentEnabled() {
 		return "", nil, false
 	}
-	methods := inlineEnrollMethods(ev, user.UserType)
+	methods := inlineEnrollMethods(ev, user.UserType, s.smsFactorAvailable())
 	if len(methods) == 0 {
 		return "", nil, false
 	}
@@ -123,6 +132,11 @@ func (s *Service) offerInlineEnrollment(ctx context.Context, user *identity.User
 	s.logAuditEvent(ctx, "authentication", "security", "mfa_inline_enrollment_offered", "success",
 		user.ID, "", user.ID, "user", map[string]interface{}{"methods": methods, "via": authMethod})
 	return id, methods, true
+}
+
+// smsFactorAvailable is identity.Service.SMSFactorAvailable, false without one.
+func (s *Service) smsFactorAvailable() bool {
+	return s.identityService != nil && s.identityService.SMSFactorAvailable()
 }
 
 // loadEnrollSession reads (without claiming) an enrol session. It answers the
@@ -264,6 +278,86 @@ func (s *Service) handleMFAEnrollTOTPFinish(c *gin.Context) {
 		return
 	}
 	s.completeInlineEnrollment(c, data, "totp")
+}
+
+// handleMFAEnrollSMSBegin: POST /oauth/mfa/enroll/sms/begin
+// {enroll_session, phone_number, country_code}. Stores an unverified SMS
+// enrolment and texts the code (identity.Service.EnrollSMS). Each begin sends
+// a message, so each counts as an attempt.
+func (s *Service) handleMFAEnrollSMSBegin(c *gin.Context) {
+	var req struct {
+		EnrollSession string `json:"enroll_session"`
+		PhoneNumber   string `json:"phone_number"`
+		CountryCode   string `json:"country_code"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	data, ok := s.loadEnrollSession(c, req.EnrollSession, "sms")
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	userID := data["user_id"]
+	// Re-checked here, not only when the session was opened: the provider can
+	// be swapped or disabled while the session lives, and an external user
+	// never gets a code factor whatever the session says.
+	if !s.smsFactorAvailable() || !externalid.FactorAllowed(data["user_type"], "sms") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "this sign-in cannot enrol sms"})
+		return
+	}
+	phone := strings.TrimSpace(req.PhoneNumber)
+	cc := strings.TrimSpace(req.CountryCode)
+	if phone == "" || cc == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "phone_number and country_code are required"})
+		return
+	}
+	s.saveEnrollSession(ctx, req.EnrollSession, data, 1)
+	if _, _, err := s.identityService.EnrollSMS(identity.ContextWithActorID(ctx, userID), userID, phone, cc); err != nil {
+		if errors.Is(err, identity.ErrSMSMFANotConfigured) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "this sign-in cannot enrol sms"})
+			return
+		}
+		s.logger.Warn("inline enrolment: SMS enrolment not started", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "the code could not be sent to that number"})
+		return
+	}
+	data["sms_started"] = "1"
+	s.saveEnrollSession(ctx, req.EnrollSession, data, 0)
+	s.logAuditEvent(ctx, "authentication", "security", "mfa_inline_enrollment_sms_sent", "success",
+		userID, c.ClientIP(), userID, "user", map[string]interface{}{"method": "sms"})
+	c.JSON(http.StatusOK, gin.H{"sent": true})
+}
+
+// handleMFAEnrollSMSFinish: POST /oauth/mfa/enroll/sms/finish
+// {enroll_session, code}. Verifies the texted code
+// (identity.Service.VerifySMSEnrollment) and completes the sign-in.
+func (s *Service) handleMFAEnrollSMSFinish(c *gin.Context) {
+	var req struct {
+		EnrollSession string `json:"enroll_session"`
+		Code          string `json:"code"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Code) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "enroll_session and code are required"})
+		return
+	}
+	data, ok := s.claimEnrollSession(c, req.EnrollSession, "sms")
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	userID := data["user_id"]
+	if data["sms_started"] == "" || !externalid.FactorAllowed(data["user_type"], "sms") {
+		s.releaseEnrollSession(ctx, req.EnrollSession, data)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": "send the code first"})
+		return
+	}
+	if err := s.identityService.VerifySMSEnrollment(identity.ContextWithActorID(ctx, userID), userID, strings.TrimSpace(req.Code)); err != nil {
+		s.releaseEnrollSession(ctx, req.EnrollSession, data)
+		s.logAuditEvent(ctx, "authentication", "security", "mfa_inline_enrollment", "failure",
+			userID, c.ClientIP(), userID, "user", map[string]interface{}{"method": "sms", "reason": "invalid_code"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_mfa_code", "error_description": "The code does not match. Check the text message and try again."})
+		return
+	}
+	s.completeInlineEnrollment(c, data, "sms")
 }
 
 // handleMFAEnrollWebAuthnBegin: POST /oauth/mfa/enroll/webauthn/begin

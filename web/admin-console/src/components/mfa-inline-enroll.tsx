@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { QRCodeSVG } from 'qrcode.react'
-import { AlertCircle, KeyRound, Loader2, Smartphone } from 'lucide-react'
+import { AlertCircle, KeyRound, Loader2, MessageSquare, Smartphone } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
@@ -37,7 +37,14 @@ export function MfaInlineEnroll({ enrollSession, methods, onDone }: Props) {
   const { t } = useTranslation()
   const canTotp = methods.includes('totp')
   const canPasskey = methods.includes('webauthn')
-  const [mode, setMode] = useState<'totp' | 'webauthn'>(canTotp ? 'totp' : 'webauthn')
+  // SMS is in methods only when the server found it deliverable and allowed
+  // for this user; the server re-checks on every call.
+  const canSms = methods.includes('sms')
+  type Mode = 'totp' | 'webauthn' | 'sms'
+  const [mode, setMode] = useState<Mode>(canTotp ? 'totp' : canPasskey ? 'webauthn' : 'sms')
+  const [phone, setPhone] = useState('')
+  const [countryCode, setCountryCode] = useState('+')
+  const [smsSent, setSmsSent] = useState(false)
   const [totp, setTotp] = useState<{ qr: string; key: string } | null>(null)
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
@@ -90,6 +97,41 @@ export function MfaInlineEnroll({ enrollSession, methods, onDone }: Props) {
     } finally {
       setBusy(false)
     }
+  }
+
+  const sendSms = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setBusy(true)
+    try {
+      await post('sms/begin', { phone_number: phone.trim(), country_code: countryCode.trim() })
+      setSmsSent(true)
+      setCode('')
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitSms = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setBusy(true)
+    try {
+      finished(await post('sms/finish', { code: code.trim() }))
+    } catch (err) {
+      setError((err as Error).message)
+      setCode('')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const switchTo = (m: Mode) => {
+    setError('')
+    setCode('')
+    setMode(m)
   }
 
   const registerPasskey = async () => {
@@ -183,16 +225,62 @@ export function MfaInlineEnroll({ enrollSession, methods, onDone }: Props) {
           </Button>
         </div>
       )}
-      {canTotp && canPasskey && (
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full"
-          onClick={() => { setError(''); setMode(mode === 'totp' ? 'webauthn' : 'totp') }}
-        >
-          {mode === 'totp'
-            ? <><KeyRound className="mr-2 h-4 w-4" />{t('login.enroll.usePasskey')}</>
-            : <><Smartphone className="mr-2 h-4 w-4" />{t('login.enroll.useApp')}</>}
+      {mode === 'sms' && canSms && (
+        smsSent ? (
+          <form onSubmit={submitSms} className="space-y-4">
+            <p className="text-sm text-muted-foreground">{t('login.enroll.smsSent')}</p>
+            <div className="space-y-2">
+              <Label htmlFor="enroll-sms-code">{t('login.enroll.codeLabel')}</Label>
+              <Input
+                id="enroll-sms-code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={8}
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={busy || code.length < 4}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : t('login.enroll.verify')}
+            </Button>
+            <Button type="button" variant="ghost" className="w-full" disabled={busy} onClick={() => { setSmsSent(false); setError('') }}>
+              {t('login.enroll.smsChangeNumber')}
+            </Button>
+          </form>
+        ) : (
+          <form onSubmit={sendSms} className="space-y-4">
+            <p className="text-sm text-muted-foreground">{t('login.enroll.smsHint')}</p>
+            <div className="flex gap-2">
+              <div className="w-24 space-y-2">
+                <Label htmlFor="enroll-sms-cc">{t('login.enroll.smsCountryCode')}</Label>
+                <Input id="enroll-sms-cc" inputMode="tel" value={countryCode}
+                  onChange={(e) => setCountryCode('+' + e.target.value.replace(/\D/g, '').slice(0, 4))} />
+              </div>
+              <div className="flex-1 space-y-2">
+                <Label htmlFor="enroll-sms-phone">{t('login.enroll.smsPhone')}</Label>
+                <Input id="enroll-sms-phone" inputMode="tel" autoComplete="tel-national" value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 15))} />
+              </div>
+            </div>
+            <Button type="submit" className="w-full" disabled={busy || phone.length < 7 || countryCode.length < 2}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : t('login.enroll.smsSend')}
+            </Button>
+          </form>
+        )
+      )}
+      {canTotp && mode !== 'totp' && (
+        <Button type="button" variant="outline" className="w-full" onClick={() => switchTo('totp')}>
+          <Smartphone className="mr-2 h-4 w-4" />{t('login.enroll.useApp')}
+        </Button>
+      )}
+      {canPasskey && mode !== 'webauthn' && (
+        <Button type="button" variant="outline" className="w-full" onClick={() => switchTo('webauthn')}>
+          <KeyRound className="mr-2 h-4 w-4" />{t('login.enroll.usePasskey')}
+        </Button>
+      )}
+      {canSms && mode !== 'sms' && (
+        <Button type="button" variant="outline" className="w-full" onClick={() => switchTo('sms')}>
+          <MessageSquare className="mr-2 h-4 w-4" />{t('login.enroll.useSms')}
         </Button>
       )}
     </div>
