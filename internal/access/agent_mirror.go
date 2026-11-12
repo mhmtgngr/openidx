@@ -70,7 +70,20 @@ func signUpdateManifest(key *rsa.PrivateKey, m *mirrorManifest) error {
 }
 
 func validMirrorChannel(ch string) bool {
-	return ch == updateChannelStable || ch == updateChannelBeta
+	_, ok := canonicalMirrorChannel(ch)
+	return ok
+}
+
+// canonicalMirrorChannel maps a requested channel to the package constant, so
+// nothing a request supplies reaches a file path or a log line.
+func canonicalMirrorChannel(ch string) (string, bool) {
+	switch ch {
+	case updateChannelStable:
+		return updateChannelStable, true
+	case updateChannelBeta:
+		return updateChannelBeta, true
+	}
+	return "", false
 }
 
 func (h *AgentAPIHandler) mirrorDir(channel string) string {
@@ -145,11 +158,12 @@ func (h *AgentAPIHandler) mirrorManifestURL(channel string) string {
 // HandleAgentMirror backs GET /downloads/agent/:channel/:file (public, like
 // /downloads/:file).
 func (h *AgentAPIHandler) HandleAgentMirror(c *gin.Context) {
-	channel, name := c.Param("channel"), c.Param("file")
-	if !validMirrorChannel(channel) {
+	channel, ok := canonicalMirrorChannel(c.Param("channel"))
+	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "unknown channel"})
 		return
 	}
+	name := c.Param("file")
 	if !downloadNameRe.MatchString(name) || strings.HasPrefix(name, ".") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file name"})
 		return
@@ -167,7 +181,9 @@ func (h *AgentAPIHandler) HandleAgentMirror(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.FileAttachment(filepath.Join(h.mirrorDir(channel), name), name)
+		// artifact came from the mirror's own latest.json and was checked
+		// against downloadNameRe; serve that, not the request's string.
+		c.FileAttachment(filepath.Join(h.mirrorDir(channel), artifact), artifact)
 		return
 	}
 	origin := h.boxOrigin()
