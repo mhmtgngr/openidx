@@ -45,6 +45,7 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/federation/oidcrp"
+	"github.com/openidx/openidx/internal/identity"
 )
 
 const (
@@ -507,7 +508,7 @@ func (s *Service) handleEAMAuthorize(c *gin.Context) {
 		return
 	}
 
-	ev := s.evaluateMFA(ctx, user, ip, c.GetHeader("User-Agent"), "", "", false, 0, nil)
+	ev := s.evaluateMFA(ctx, user, ip, c.GetHeader("User-Agent"), "", "", false, 0, nil, identity.SignInContext{})
 	if ev.Undecidable {
 		refuse(eamRefuse(eamErrUnavailable, "the MFA policy could not be evaluated", true), userID)
 		return
