@@ -41,14 +41,14 @@ type networkResourceView struct {
 
 // networkPolicyView is the organization's tunnel policy.
 type networkPolicyView struct {
-	AlwaysOn                  bool   `json:"always_on"`
-	SplitTunnel               bool   `json:"split_tunnel"`
-	BlockDirectCorporateCIDRs bool   `json:"block_direct_corporate_cidrs"`
+	AlwaysOn                  bool `json:"always_on"`
+	SplitTunnel               bool `json:"split_tunnel"`
+	BlockDirectCorporateCIDRs bool `json:"block_direct_corporate_cidrs"`
 	// TunnelScope is who the tunnel turns on for: "all", "tagged" (devices
 	// carrying one of TunnelTags) or "off". AlwaysOn is TunnelScope == "all".
 	TunnelScope string   `json:"tunnel_scope"`
 	TunnelTags  []string `json:"tunnel_tags"`
-	UpdatedAt                 string `json:"updated_at,omitempty"`
+	UpdatedAt   string   `json:"updated_at,omitempty"`
 	// Version is the policy version devices receive (tunnel_policy.go), and
 	// Devices how many active devices report applying it. Both are absent
 	// when they cannot be read; the policy itself is still answered.
@@ -454,8 +454,8 @@ func (s *Service) handleGetNetworkPolicy(c *gin.Context) {
 // out keep their stored (or default) value.
 func (s *Service) handlePutNetworkPolicy(c *gin.Context) {
 	var req struct {
-		AlwaysOn                  *bool `json:"always_on"`
-		SplitTunnel               *bool `json:"split_tunnel"`
+		AlwaysOn                  *bool     `json:"always_on"`
+		SplitTunnel               *bool     `json:"split_tunnel"`
 		BlockDirectCorporateCIDRs *bool     `json:"block_direct_corporate_cidrs"`
 		TunnelScope               *string   `json:"tunnel_scope"`
 		TunnelTags                *[]string `json:"tunnel_tags"`
