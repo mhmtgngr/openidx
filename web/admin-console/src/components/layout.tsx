@@ -259,6 +259,14 @@ export function Layout() {
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 type="search"
+                name="openidx-menu-search"
+                // The sign-in page's saved username is the only text field a
+                // browser has a value for, and Edge put it here: the menu
+                // then filtered on the person's e-mail and showed "No menu
+                // items match". A search box is never a credential field.
+                autoComplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={t('chrome.searchMenuPlaceholder')}
