@@ -328,8 +328,15 @@ jobs:
           $ver = [version]($msi.BaseName -replace '^OpenIDX-', '')
           $next = "{0}.{1}.{2}" -f $ver.Major, $ver.Minor, ($ver.Build + 1)
           $next_msi = Join-Path $env:RUNNER_TEMP "OpenIDX-$next.msi"
+          # Same optional runtime DLLs as the real MSI; without them the
+          # upgrade removes libvpx and the service cannot start.
+          $dllArgs = @()
+          $vpx = Get-ChildItem art -Recurse -Filter '*vpx*.dll' | Select-Object -First 1
+          if ($vpx) { $dllArgs += @('-d', "VpxDll=$($vpx.FullName)") }
+          $pth = Get-ChildItem art -Recurse -Filter 'libwinpthread*.dll' | Select-Object -First 1
+          if ($pth) { $dllArgs += @('-d', "PthreadDll=$($pth.FullName)") }
           wix build agent/packaging/wix/OpenIDX.wxs -ext WixToolset.Util.wixext `
-            -d "Version=$next" -d "ExePath=$($exe.FullName)" -arch x64 -o $next_msi
+            -d "Version=$next" -d "ExePath=$($exe.FullName)" @dllArgs -arch x64 -o $next_msi
           if ($LASTEXITCODE -ne 0) { throw 'building the upgrade MSI failed' }
 
           $token = 'smoke-SECRET-enroll-token-4b1d'
@@ -922,8 +929,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openidx-windows-client-${{ steps.ver.outputs.version }}
+          # The runtime DLLs ride along so msi-smoke's upgrade MSI carries
+          # the same files as the real one (a major upgrade without libvpx
+          # removes it, and the new exe then cannot load: 1920).
           path: |
             agent/dist/openidx-agent.exe
+            agent/dist/*.dll
             dist/OpenIDX-*.msi
           if-no-files-found: error
 
