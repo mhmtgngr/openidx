@@ -23,6 +23,7 @@ are in the identity API reference,
 - [WebAuthn (Passwordless Authentication)](#webauthn-passwordless-authentication)
 - [Push Notification MFA](#push-notification-mfa)
 - [TOTP MFA](#totp-mfa)
+- [Rollout Runbook](#rollout-runbook)
 - [Frontend Integration Examples](#frontend-integration-examples)
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -524,6 +525,108 @@ Already implemented. See existing documentation for TOTP endpoints.
 - `POST /api/v1/identity/mfa/totp/verify` - Verify TOTP code
 - `GET /api/v1/identity/mfa/totp/status` - Check if enabled
 - `DELETE /api/v1/identity/mfa/totp` - Disable TOTP
+
+---
+
+## Rollout Runbook
+
+A concrete sequence for turning MFA on for a real organization: enrol the
+administrators first, then publish a policy for internal users, and only later
+(if ever) consider SMS.
+
+### Step 1: Enrol with Google Authenticator or Microsoft Authenticator
+
+OpenIDX TOTP is the standard `otpauth://totp/...` key URI: **SHA1, 30-second
+period, 6-digit codes** (the defaults every mainstream authenticator app
+expects), with a 32-byte secret. The issuer shown in the app is your
+organization's name (falling back to `OpenIDX`), and the account label is the
+user's email.
+
+1. Begin enrolment (`POST /api/v1/identity/mfa/totp/setup`, or the enrolment
+   step of an invitation / inline-enrolment flow). The response carries the
+   `otpauth` URL rendered as a QR code and the Base32 secret as a **manual
+   key**.
+2. In **Google Authenticator**: tap **+** > **Scan a QR code** and point the
+   camera at the QR. In **Microsoft Authenticator**: **+** > **Other account
+   (Google, Facebook, etc.)** > scan the QR.
+3. No camera? Both apps accept the manual key: choose **Enter a setup key**
+   (Google) / **Or enter code manually** (Microsoft), paste the Base32 secret,
+   and leave the type as time-based.
+4. Type the 6-digit code the app now shows to complete enrolment
+   (`POST /api/v1/identity/mfa/totp/enroll`).
+
+If the code is rejected, check the device clock: TOTP tolerates only a small
+skew around the 30-second step.
+
+### Step 2: First policy -- internal users, TOTP + passkeys, 72h grace
+
+Recommended first policy: cover **internal** users, require `totp` and
+`webauthn`, and give a 72-hour grace period so nobody is locked out on day
+one. In the admin console, open the **MFA Management** page
+(`/mfa-management`) and its **Policies** tab, then **create a policy**:
+
+1. **Name** and **Description**: e.g. `Internal users` / `TOTP or passkey for
+   all staff`.
+2. **Priority**: a number; policies are evaluated in ascending order, lowest
+   number first (the form's default is `100`).
+3. **Groups** and the audience lists: leave **Groups**, **Vendor
+   organizations**, **Identity providers** and **Client applications** empty,
+   and under **User types** tick only **internal**. An empty audience list
+   means "any", so this policy covers every internal user.
+4. **Required methods**: tick **TOTP** and **WebAuthn** (the form also offers
+   push, SMS and email; leave those off for now). With no methods ticked the
+   policy instead challenges anyone who already has *some* factor and accepts
+   any of them; with methods ticked, only those satisfy it.
+5. **Grace period (hours)**: `72`. This is the time a covered user without a
+   required method has to enrol one, counted from their first sign-in under
+   the policy (0 to 720 hours; the field is only active when methods are
+   ticked).
+6. Save. The **Enrollment** tab shows per-method counts and the **Users** tab
+   shows who has which factor, so you can watch adoption during the grace
+   window.
+
+Users who reach the end of the grace period without a factor get inline
+enrolment at the login page (`MFA_INLINE_ENROLLMENT`, default `true`) rather
+than a lockout.
+
+### Step 3 (DEFERRED): SMS activation runbook
+
+> **DEFERRED -- do not activate yet.** SMS is a weaker factor (SIM swap,
+> interception) and this deployment keeps it off. The runbook below is kept
+> for the day a business case forces it. Note that **external (partner) users
+> never get SMS**: the factors an external user may enrol and sign in with
+> are fixed to `totp`, `webauthn` and `push`
+> (`externalid.StrongFactors`), whatever any policy says.
+
+When the time comes:
+
+1. Set `SMS_ENABLED=true` and pick a provider with `SMS_PROVIDER`. Supported
+   values: `twilio`, `aws_sns`, `netgsm`, `ileti_merkezi`, `verimor`,
+   `turkcell`, `vodafone`, `turk_telekom`, `mutlucell`, `webhook` (and
+   `mock`, see below).
+2. Configure the provider's credentials:
+
+   | Provider | Environment variables |
+   |---|---|
+   | `twilio` | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` |
+   | `aws_sns` | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
+   | `netgsm` | `NETGSM_USERCODE`, `NETGSM_PASSWORD`, `NETGSM_HEADER` |
+   | `ileti_merkezi` | `ILETIMERKEZI_API_KEY`, `ILETIMERKEZI_API_SECRET`, `ILETIMERKEZI_SENDER` |
+   | `verimor` | `VERIMOR_USERNAME`, `VERIMOR_PASSWORD`, `VERIMOR_SOURCE_ADDR` |
+   | `turkcell` | `TURKCELL_SMS_USERNAME`, `TURKCELL_SMS_PASSWORD`, `TURKCELL_SMS_SENDER` |
+   | `vodafone` | `VODAFONE_SMS_API_KEY`, `VODAFONE_SMS_SECRET`, `VODAFONE_SMS_SENDER` |
+   | `turk_telekom` | `TURKTELEKOM_SMS_API_KEY`, `TURKTELEKOM_SMS_SECRET`, `TURKTELEKOM_SMS_SENDER` |
+   | `mutlucell` | `MUTLUCELL_USERNAME`, `MUTLUCELL_PASSWORD`, `MUTLUCELL_API_KEY`, `MUTLUCELL_SENDER` |
+   | `webhook` | `SMS_WEBHOOK_URL`, `SMS_WEBHOOK_API_KEY` |
+
+3. Do **not** rely on `mock` outside development: it is the default provider
+   and delivers nothing, and the service **refuses to start with it in
+   production** (`SMS provider is "mock", which delivers nothing; configure a
+   real provider or run with APP_ENV=development`). Config validation also
+   warns when `SMS_ENABLED=true` is combined with the mock provider. A typo'd
+   provider name is an error, never a silent fallback to mock.
+4. Only after delivery is verified, add `sms` to the required methods of a
+   policy covering the intended (internal) users.
 
 ---
 

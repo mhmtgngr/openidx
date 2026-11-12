@@ -63,6 +63,51 @@ federation profile. The quick-setup templates fill sensible values.
 | `trust_upstream_mfa` | `false` | Count the provider's MFA (`amr` such as `mfa`, `otp`, `hwk`) for internal users. External users always prove an OpenIDX factor |
 | `pass_through_params` | `login_hint, prompt, max_age` | Authorization parameters forwarded upstream (`domain_hint`, `ui_locales`, `acr_values` may be added) |
 
+## Identity at the IdP, MFA at OpenIDX
+
+A sign-in through Entra ID, AD FS or any other provider (the SSO buttons, or
+`/oauth/authorize?idp_hint=<provider id>`) proves **who the person is at that
+provider** -- one factor. It does not decide whether that is enough: after the
+callback, OpenIDX runs the **same MFA evaluation as a password login**
+(`internal/oauth/external_signin_mfa.go`). The evaluation sees the user's
+enrolled factors, the MFA policies that cover them, any grace period, and the
+risk engine, with the sign-in's provider (`idp_id`) and the requesting
+`client_id` as context. Depending on the outcome, the user:
+
+- is issued the authorization code directly (no policy requires more, or a
+  trusted device/browser satisfies it);
+- is handed back to the login page with an `mfa_session` pinned to the
+  methods the evaluation offered, and `POST /oauth/mfa-verify` completes the
+  pending request exactly as after a password;
+- is refused, with the reason in the login page's `?error=`
+  (`sso_mfa_enrollment_required`, `sso_high_risk_login`, `sso_sign_in_failed`).
+
+### Start with `trust_upstream_mfa: false`
+
+`trust_upstream_mfa` defaults to `false`, and that is the recommended starting
+point: the provider's own MFA is **not** counted, and every user who falls
+under an OpenIDX MFA policy proves an OpenIDX factor even right after a full
+Entra ID MFA sign-in. That is deliberate. A phished or attacker-registered
+upstream account must not become a complete OpenIDX account just because the
+provider asserted something in `amr`.
+
+Every federated sign-in writes an `sso_login` audit event that records the
+provider's `amr` claim as `upstream_amr` (and `upstream_mfa_trusted`). Run
+with the default for a while and read those events: once you see real,
+trustworthy `amr` values (`mfa`, `otp`, `hwk`, ...) from a provider you
+control, you may set `trust_upstream_mfa: true` **per identity provider** to
+stop asking internal users for a second factor twice. External (partner)
+users always prove an OpenIDX factor regardless of this setting.
+
+### Users without a factor: inline enrolment
+
+A user whom a policy requires to have a factor, but who has none enrolled (or
+whose grace period is over), is not dead-ended. With `MFA_INLINE_ENROLLMENT`
+(default `true`), the callback redirects to the login page with an
+`enroll_session`, and the page walks the person through enrolling an
+authenticator app or a passkey on the spot before the code is issued. Set it
+to `false` to refuse instead (`sso_mfa_enrollment_required`).
+
 ## Microsoft Entra ID
 
 1. In the Entra admin center, open **App registrations > New registration**.
