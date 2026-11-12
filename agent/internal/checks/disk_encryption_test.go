@@ -61,3 +61,16 @@ func TestDiskEncryptionCheck_Run_ScoreRange(t *testing.T) {
 	assert.GreaterOrEqual(t, result.Score, float64(0))
 	assert.LessOrEqual(t, result.Score, float64(1))
 }
+
+// The service ran manage-bde by bare name, which Go refuses to resolve from
+// the working directory, so every Windows device reported an error.
+func TestManageBdeIsRunByAbsolutePath(t *testing.T) {
+	t.Setenv("SystemRoot", `D:\Win`)
+	p := manageBdePath()
+	assert.Contains(t, p, "System32")
+	assert.Contains(t, p, "manage-bde.exe")
+	assert.True(t, len(p) > len("manage-bde.exe"), "must not be a bare name: %q", p)
+
+	t.Setenv("SystemRoot", "")
+	assert.Contains(t, manageBdePath(), "Windows")
+}
