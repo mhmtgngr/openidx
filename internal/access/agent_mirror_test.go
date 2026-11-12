@@ -143,6 +143,25 @@ func TestConfigUpdateBlockNamesTheBoxMirror(t *testing.T) {
 	}
 }
 
+// The box's PublicBaseURL is the config default (http://localhost:3000) on a
+// deployment that never set it. It must not outrank the issuer: the box
+// advertised an MSI at localhost, which no endpoint can reach.
+func TestMirrorOriginIgnoresALoopbackPublicBaseURL(t *testing.T) {
+	h, _, _ := agentMirrorFixture(t)
+	h.zm.cfg.PublicBaseURL = "http://localhost:3000"
+	if got := h.boxOrigin(); got != "https://openidx.tdv.org" {
+		t.Fatalf("origin = %q, want the issuer's", got)
+	}
+	h.zm.cfg.OAuthIssuer = "http://127.0.0.1:8006"
+	if got := h.boxOrigin(); got != "" {
+		t.Fatalf("origin = %q, want none when only loopback origins are configured", got)
+	}
+	h.zm.cfg.PublicBaseURL = "https://portal.example.org"
+	if got := h.boxOrigin(); got != "https://portal.example.org" {
+		t.Fatalf("origin = %q, want PublicBaseURL when the issuer is loopback", got)
+	}
+}
+
 func TestConfigUpdateBlockSkipsMirrorWithoutKey(t *testing.T) {
 	h, _, _ := agentMirrorFixture(t)
 	t.Setenv("AGENT_MANIFEST_SIGNING_KEY", "")
