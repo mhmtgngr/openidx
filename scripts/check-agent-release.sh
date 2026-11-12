@@ -52,7 +52,8 @@ if [ "${1:-}" = "--manifest" ]; then
   field() { python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get(sys.argv[1],""))' "$1" <<<"$json" 2>/dev/null || true; }
   python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$json" 2>/dev/null || { m "not JSON"; exit 1; }
   v="$(field version)"; u="$(field url)"; h="$(field sha256)"; sg="$(field signature)"
-  [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || m "version '$v' is not X.Y.Z"
+  # X.Y.Z, or a pre-release X.Y.Z-beta.N that feeds the agent-beta channel.
+  [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] || m "version '$v' is not X.Y.Z or X.Y.Z-pre"
   [ -z "$want" ] || [ "$v" = "$want" ] || m "version is $v, release is $want"
   [[ "$u" =~ ^https://[^/]+/.+/releases/download/agent-v${v//./\\.}/OpenIDX-${v//./\\.}\.msi$ ]] ||
     m "url '$u' is not the versioned agent-v$v/OpenIDX-$v.msi asset (never releases/latest)"

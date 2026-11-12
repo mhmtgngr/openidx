@@ -325,7 +325,7 @@ jobs:
           $msi = Get-ChildItem art -Recurse -Filter 'OpenIDX-*.msi' | Select-Object -First 1
           $exe = Get-ChildItem art -Recurse -Filter 'openidx-agent.exe' | Select-Object -First 1
           if (-not $msi -or -not $exe) { throw 'artifact has no MSI or exe' }
-          $ver = [version]($msi.BaseName -replace '^OpenIDX-', '')
+          $ver = [version](($msi.BaseName -replace '^OpenIDX-', '') -replace '-.*$', '')
           $next = "{0}.{1}.{2}" -f $ver.Major, $ver.Minor, ($ver.Build + 1)
           $next_msi = Join-Path $env:RUNNER_TEMP "OpenIDX-$next.msi"
           # The upgrade MSI must ship the same payload as the one it replaces.
@@ -883,6 +883,7 @@ jobs:
           wix build agent/packaging/wix/OpenIDX.wxs \
             -ext WixToolset.Util.wixext \
             -d "Version=$AGENT_VERSION" \
+            -d "MsiVersion=${AGENT_VERSION%%-*}" \
             -d ExePath=agent/dist/openidx-agent.exe \
             "${CHANNEL_ARG[@]}" \
             "${ZITI_ARG[@]}" \

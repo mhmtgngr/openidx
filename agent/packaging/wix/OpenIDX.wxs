@@ -14,12 +14,21 @@
   (best-effort, retried by the service). Optional: TUNNEL_ENABLED, SERVER_CA,
   PROXY_URL, LOG_LEVEL, KEEP_ENROLL_TOKEN (default 1). Intune detection:
   HKLM\SOFTWARE\OpenIDX\Agent Version. See docs/runbooks/agent-intune.md.
+
+  MsiVersion is the package's numeric ProductVersion (X.Y.Z, each part as
+  Windows Installer allows). It defaults to Version; a pre-release build
+  (Version=0.6.0-beta.1) passes it explicitly, because Windows Installer
+  takes only numbers and would mangle the suffix. The registry keeps the full
+  Version, so detection and support see 0.6.0-beta.1.
 -->
+<?ifndef MsiVersion ?>
+<?define MsiVersion = $(var.Version) ?>
+<?endif?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="OpenIDX Agent"
            Manufacturer="OpenIDX"
-           Version="$(var.Version)"
+           Version="$(var.MsiVersion)"
            UpgradeCode="6f4a1e2c-2b7d-4b1a-9c3e-0a1b2c3d4e5f"
            Scope="perMachine">
 
