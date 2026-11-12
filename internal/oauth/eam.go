@@ -367,20 +367,20 @@ func (s *Service) resolveEAMUser(ctx context.Context, hint *oidcrp.Claims) (stri
 	ctx = orgctx.WithBypassRLS(ctx)
 	if hint.OID != "" {
 		// 1. The identity link an Entra sign-in recorded (B1: external_id_claim=oid).
+		//orgscope:ignore EAM is install-wide: one Entra app, people in any organization; the tenant id pins the provider
 		ids, err := s.eamUserIDs(ctx, `
 			SELECT DISTINCT l.user_id::text FROM user_identity_links l
 			  JOIN identity_providers p ON p.id = l.provider_id
 			 WHERE l.external_id = $1 AND p.issuer_url ILIKE '%' || $2 || '%'
-			   --orgscope:ignore EAM is install-wide: one Entra app, people in any organization; the tenant id pins the provider
 			`, hint.OID, hint.TID)
 		if err != nil || len(ids) > 0 {
 			return eamOne(ids, err)
 		}
 		// 2. A directory sync from Entra (directory/azure_ad.go stores the
 		// Graph object id as users.external_id, source azure_ad).
+		//orgscope:ignore EAM is install-wide: one Entra app, people in any organization
 		ids, err = s.eamUserIDs(ctx, `
 			SELECT id::text FROM users WHERE source = 'azure_ad' AND external_id = $1
-			   --orgscope:ignore EAM is install-wide: one Entra app, people in any organization
 			`, hint.OID)
 		if err != nil || len(ids) > 0 {
 			return eamOne(ids, err)
@@ -388,9 +388,9 @@ func (s *Service) resolveEAMUser(ctx context.Context, hint *oidcrp.Claims) (stri
 	}
 	// 3. preferred_username as a verified email address.
 	if email := strings.TrimSpace(hint.PreferredUsername); strings.Contains(email, "@") {
+		//orgscope:ignore EAM is install-wide: one Entra app, people in any organization
 		ids, err := s.eamUserIDs(ctx, `
 			SELECT id::text FROM users WHERE lower(email) = lower($1) AND email_verified = true
-			   --orgscope:ignore EAM is install-wide: one Entra app, people in any organization
 			`, email)
 		return eamOne(ids, err)
 	}

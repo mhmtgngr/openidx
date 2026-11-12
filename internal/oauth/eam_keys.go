@@ -340,6 +340,7 @@ func (s *Service) handleEAMStatus(c *gin.Context) {
 			st.Keys = append(st.Keys, k.view())
 		}
 		if err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+			//orgscope:ignore EAM status is install-wide: one Entra app counts verifications across every organization
 			`SELECT COUNT(*) FILTER (WHERE action = 'eam.mfa_satisfied'),
 			        COUNT(*) FILTER (WHERE action IN ('eam.mfa_refused', 'eam.mfa_failed'))
 			   FROM audit_events
