@@ -369,7 +369,7 @@ func (s *Service) completeInlineEnrollment(c *gin.Context, data map[string]strin
 	}
 	if session != nil {
 		oauthParams["session_id"] = session.ID
-		s.recordSessionAuthMethods(ctx, session.ID, []string{firstFactor, "mfa"})
+		s.recordSessionAuthMethods(ctx, session.ID, mfaAuthMethods(firstFactor, method))
 	}
 	if len(codes) > 0 {
 		c.Set(ctxEnrollBackupCodes, codes)

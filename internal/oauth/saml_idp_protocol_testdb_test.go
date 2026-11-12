@@ -125,7 +125,7 @@ func newSAMLIdPHarness(t *testing.T) *samlIdPHarness {
 		issuer:     samlTestIssuer,
 		privateKey: h.idp.priv,
 		publicKey:  &h.idp.priv.PublicKey,
-		config:     &config.Config{},
+		config:     &config.Config{SAMLIdPEnabled: true},
 	}
 
 	h.email = "saml-" + uuid.NewString()[:8] + "@example.test"
@@ -490,11 +490,15 @@ func TestSAMLIdPRefusesAuthnRequestsItMustNotAnswer(t *testing.T) {
 			return sso(redirectQuery(t, "SAMLRequest", authnRequestXML(id(), open.entityID, ""), "rs", nil))
 		}, open},
 	}
+	// A request that passes every check is still refused: SP-initiated
+	// sign-on is not offered (saml_sp_initiated_unsupported), and no
+	// Response is ever produced on this path.
 	for _, tc := range accepted {
-		t.Run("answered: "+tc.name, func(t *testing.T) {
-			action, _, _ := autoPost(t, tc.resp())
-			if action != tc.sp.acs {
-				t.Fatalf("the Response goes to %q, want the registered ACS %q", action, tc.sp.acs)
+		t.Run("valid but unsupported: "+tc.name, func(t *testing.T) {
+			w := tc.resp()
+			if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), errSAMLSPInitiatedUnsupported) ||
+				strings.Contains(w.Body.String(), "SAMLResponse") {
+				t.Fatalf("answered %d: %s", w.Code, w.Body.String())
 			}
 		})
 	}
@@ -516,9 +520,10 @@ func TestSAMLIdPResponsesAreSignedAndEncryptedAsRegistered(t *testing.T) {
 		r.EncryptionCertificate = "not a certificate"
 	})
 
-	signOn := func(sp samlTestSP, reqID string) *httptest.ResponseRecorder {
-		return h.do(http.MethodGet, "/saml/idp/sso?"+redirectQuery(t, "SAMLRequest",
-			authnRequestXML(reqID, sp.entityID, sp.acs), "relay-1", nil), nil, true)
+	// IdP-initiated: SP-initiated sign-on is refused (saml_sp_initiated_unsupported).
+	signOn := func(sp samlTestSP, _ string) *httptest.ResponseRecorder {
+		return h.do(http.MethodGet, "/saml/idp/sso/unsolicited?"+url.Values{
+			"sp_entity_id": {sp.entityID}, "RelayState": {"relay-1"}}.Encode(), nil, true)
 	}
 	verifyWithIdP := func(el *etree.Element) error {
 		return verifyEnvelopedRootSignature(el, h.idp.cert)
@@ -543,8 +548,8 @@ func TestSAMLIdPResponsesAreSignedAndEncryptedAsRegistered(t *testing.T) {
 		}
 		requireSignatureAfterIssuer(t, assertion)
 		requireSelfContainedNamespaces(t, assertion)
-		if got := root.SelectAttrValue("InResponseTo", ""); got != "_req-plain" {
-			t.Fatalf("InResponseTo = %q", got)
+		if root.SelectAttr("InResponseTo") != nil {
+			t.Fatal("an unsolicited Response carries InResponseTo")
 		}
 		if got := assertion.FindElement(".//Audience").Text(); got != plain.entityID {
 			t.Fatalf("Audience = %q, want %q", got, plain.entityID)
@@ -611,6 +616,16 @@ func TestSAMLIdPResponsesAreSignedAndEncryptedAsRegistered(t *testing.T) {
 	})
 }
 
+func TestSAMLIdPInitiatedSSOIsOffUnlessEnabled(t *testing.T) {
+	h := newSAMLIdPHarness(t)
+	sp := h.registerSP("unsolicited-flag", nil)
+	h.svc.config = &config.Config{}
+	w := h.do(http.MethodGet, "/saml/idp/sso/unsolicited?sp_entity_id="+url.QueryEscape(sp.entityID), nil, true)
+	if w.Code != http.StatusNotFound || strings.Contains(w.Body.String(), "SAMLResponse") {
+		t.Fatalf("with SAML_IDP_ENABLED off: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestSAMLIdPInitiatedSSO(t *testing.T) {
 	h := newSAMLIdPHarness(t)
 	sp := h.registerSP("unsolicited", nil)
@@ -663,8 +678,7 @@ func TestSAMLIdPRefusesLogoutRequestsItCannotTrust(t *testing.T) {
 	dest := samlTestIssuer + "/saml/idp/slo"
 
 	// Sign on first, so there is a SAML session for the SP to end.
-	_, doc, _ := autoPost(t, h.do(http.MethodGet, "/saml/idp/sso?"+redirectQuery(t, "SAMLRequest",
-		authnRequestXML("_req-slo", sp.entityID, sp.acs), "", nil), nil, true))
+	_, doc, _ := autoPost(t, h.do(http.MethodGet, "/saml/idp/sso/unsolicited?sp_entity_id="+url.QueryEscape(sp.entityID), nil, true))
 	sessionIndex := doc.Root().FindElement(".//AuthnStatement").SelectAttrValue("SessionIndex", "")
 	if sessionIndex == "" {
 		t.Fatal("the assertion carries no SessionIndex")

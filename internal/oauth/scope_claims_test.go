@@ -294,7 +294,7 @@ func TestDiscoveryAdvertisesEveryClaimTheIssuerEmits(t *testing.T) {
 	// The list must not advertise what nothing emits either: an advertised
 	// claim a relying party never receives is the same defect facing the other
 	// way. Claims that only appear with a session or a nonce are named here.
-	onlyUnderSomeRequests := map[string]bool{"sid": true, "auth_time": true, "amr": true, "idp": true} // idp: only for a session a federated sign-in established
+	onlyUnderSomeRequests := map[string]bool{"sid": true, "auth_time": true, "amr": true, "idp": true, "acr": true} // idp: only for a session a federated sign-in established
 	for claim := range advertised {
 		if emitted[claim] || onlyUnderSomeRequests[claim] {
 			continue

@@ -1215,6 +1215,10 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Application SSO Settings
 	admin.GET("/applications/:id/sso-settings", svc.handleGetApplicationSSOSettings)
 	admin.PUT("/applications/:id/sso-settings", svc.handleUpdateApplicationSSOSettings)
+	// Access conditions (resource_conditions): device trust, risk ceiling,
+	// countries, fresh second factor (resource_conditions.go).
+	admin.GET("/applications/:id/conditions", svc.handleGetApplicationConditions)
+	admin.PUT("/applications/:id/conditions", svc.handlePutApplicationConditions)
 
 	// Directory integrations
 	admin.GET("/directories", svc.handleListDirectories)

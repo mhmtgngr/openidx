@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -13,7 +14,55 @@ import (
 
 	"github.com/openidx/openidx/internal/accessdecision"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/stepup"
 )
+
+// stepUpACR is the authentication context a fresh-factor refusal asks the
+// OIDC side for.
+const stepUpACR = "urn:openidx:mfa:fresh"
+
+// onlyStepUp reports whether a fresh factor is the only thing missing.
+func onlyStepUp(reasons []string) bool {
+	return len(reasons) == 1 && reasons[0] == accessdecision.ReasonStepUp
+}
+
+// stepUpReturnTarget is the page a browser returns to after the step-up
+// sign-in: the forwarded one under forward-auth, the request itself on the
+// built-in proxy. Only a GET is sent round: a form post would be replayed as
+// a GET and lose its body, so it is refused with the header instead.
+func stepUpReturnTarget(c *gin.Context) (string, bool) {
+	method, target := c.Request.Method, c.Request.URL.RequestURI()
+	if fwd := c.GetHeader("X-Forwarded-Uri"); fwd != "" {
+		target = fwd
+		if m := c.GetHeader("X-Forwarded-Method"); m != "" {
+			method = m
+		}
+	}
+	return target, method == http.MethodGet
+}
+
+// loginSessionFreshness reads whether the OpenIDX login session behind a
+// proxy session proved a second factor within the step-up window. known is
+// false when the proxy session names no login session or the row cannot be
+// read: the condition is then left unjudged rather than guessed.
+func (s *Service) loginSessionFreshness(ctx context.Context, session *ProxySession, orgID string) (known, fresh bool) {
+	if session == nil || session.loginSessionID == "" || orgID == "" || s.db == nil {
+		return false, false
+	}
+	bypass := orgctx.WithBypassRLS(ctx)
+	at, ok, err := stepup.Freshness(bypass, s.db, orgID, session.loginSessionID)
+	if err != nil {
+		return false, false
+	}
+	if !ok {
+		return true, false
+	}
+	var def time.Duration
+	if s.config != nil {
+		def = s.config.StepUpMaxAge
+	}
+	return true, time.Since(at) <= stepup.MaxAge(bypass, s.db, def)
+}
 
 // ONE DECISION FOR BOTH PROXY PATHS.
 //
@@ -35,15 +84,18 @@ import (
 
 // situation is what the proxy knows about the request at hand, for the
 // resource's conditions: the device's trust, the country the address
-// resolves to, and the risk the request carries (scoreAccessContext). The
-// proxy does not know when the person last proved a second factor — its
-// session is not the login session — so a fresh-factor condition stays
-// unjudged here (Subject.MFAKnown).
+// resolves to, and the risk the request carries (scoreAccessContext). When
+// the proxy session remembers the OpenIDX login session it was signed in from
+// (the token's sid), reachDecision also reads when that session last proved a
+// second factor, and a fresh-factor condition is judged; without one it stays
+// unjudged (Subject.MFAKnown).
 type situation struct {
 	known         bool
 	deviceTrusted bool
 	country       string
 	risk          int
+	mfaKnown      bool
+	freshMFA      bool
 }
 
 // situationOf reads the situation off a built access context.
@@ -57,7 +109,7 @@ func (sit situation) key() string {
 	if !sit.known {
 		return "-"
 	}
-	return fmt.Sprintf("%t|%s|%d", sit.deviceTrusted, strings.ToUpper(sit.country), sit.risk)
+	return fmt.Sprintf("%t|%s|%d|%t|%t", sit.deviceTrusted, strings.ToUpper(sit.country), sit.risk, sit.mfaKnown, sit.freshMFA)
 }
 
 // reachDecision evaluates, records and, on a refusal, answers. ok is false
@@ -69,6 +121,9 @@ func (s *Service) reachDecision(c *gin.Context, route *ProxyRoute, session *Prox
 		return true, false // no application behind the route: nothing to decide here
 	}
 	ctx := c.Request.Context()
+	if sit.known && !sit.mfaKnown {
+		sit.mfaKnown, sit.freshMFA = s.loginSessionFreshness(ctx, session, appOrgID)
+	}
 	key := session.UserID + "|" + appID + "|" + sit.key()
 	fresh := true
 	var d accessdecision.Decision
@@ -89,6 +144,7 @@ func (s *Service) reachDecision(c *gin.Context, route *ProxyRoute, session *Prox
 			accessdecision.Subject{
 				UserID: session.UserID, OrgID: appOrgID, Roles: session.Roles,
 				KnowsSituation: sit.known, DeviceTrusted: sit.deviceTrusted, Country: sit.country, RiskScore: sit.risk,
+				MFAKnown: sit.mfaKnown, FreshMFA: sit.freshMFA,
 			}, appID)
 		if err != nil {
 			s.logger.Error("reach decision failed", zap.String("application_id", appID), zap.Error(err))
@@ -125,6 +181,16 @@ func (s *Service) reachDecision(c *gin.Context, route *ProxyRoute, session *Prox
 			if d.StepUp {
 				// A trusted device or a fresh factor would change the answer.
 				c.Header("X-Step-Up-Required", "true")
+				if target, ok := stepUpReturnTarget(c); ok && onlyStepUp(d.Reasons) {
+					// Only a fresh factor is missing: send the browser through
+					// sign-in again with acr_values=urn:openidx:mfa:fresh, which
+					// the OIDC side answers with a second-factor challenge
+					// (oauth/acr.go), and back to this page.
+					c.Header("X-Step-Up-Acr", stepUpACR)
+					c.Redirect(http.StatusFound, "/access/.auth/login?acr_values="+url.QueryEscape(stepUpACR)+
+						"&redirect_url="+url.QueryEscape(target))
+					return false, false
+				}
 			}
 			if len(d.Reasons) == 1 && d.Reasons[0] == accessdecision.ReasonNotAssigned {
 				c.JSON(http.StatusForbidden, gin.H{"error": "not assigned to this application"})

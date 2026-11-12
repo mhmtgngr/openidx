@@ -541,6 +541,13 @@ type Config struct {
 	// code is issued. False restores the 403. MFA_INLINE_ENROLLMENT.
 	MFAInlineEnrollment bool `mapstructure:"mfa_inline_enrollment"`
 
+	// SAMLIdPEnabled turns on IdP-initiated SAML sign-on
+	// (GET /saml/idp/sso/unsolicited). Off by default: the assertion is issued
+	// from the browser session with no MFA policy, assignment gate or device
+	// gate in front of it. SP-initiated sign-on is refused whatever this says
+	// (saml_sp_initiated_unsupported). SAML_IDP_ENABLED.
+	SAMLIdPEnabled bool `mapstructure:"saml_idp_enabled"`
+
 	// BotGate is the tri-state BOT_GATE (off|observe|enforce) for the login
 	// door: after LoginFailChallengeAfter failed password checks against one
 	// typed account name in LoginFailWindowSeconds — from ANY address — the
@@ -1235,6 +1242,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("abac_enforce", "off")
 	v.SetDefault("stepup_gate", "off")
 	v.SetDefault("mfa_inline_enrollment", true)
+	v.SetDefault("saml_idp_enabled", false)
 	v.SetDefault("bot_gate", "off")
 	v.SetDefault("login_fail_challenge_after", 5)
 	v.SetDefault("login_fail_window_seconds", 900)
@@ -1547,6 +1555,7 @@ func bindEnvVars(v *viper.Viper) {
 		"abac_enforce":                        "ABAC_ENFORCE",
 		"stepup_gate":                         "STEPUP_GATE",
 		"mfa_inline_enrollment":               "MFA_INLINE_ENROLLMENT",
+		"saml_idp_enabled":                    "SAML_IDP_ENABLED",
 		"bot_gate":                            "BOT_GATE",
 		"login_fail_challenge_after":          "LOGIN_FAIL_CHALLENGE_AFTER",
 		"login_fail_window_seconds":           "LOGIN_FAIL_WINDOW_SECONDS",

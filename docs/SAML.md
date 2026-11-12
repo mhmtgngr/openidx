@@ -1,9 +1,26 @@
 # SAML 2.0 Identity Provider - OpenIDX
 
 OpenIDX is a SAML 2.0 identity provider. The oauth-service publishes IdP
-metadata, answers AuthnRequests from registered service providers, starts
-unsolicited (IdP-initiated) sign-on, and takes part in Single Logout in both
-directions.
+metadata, validates AuthnRequests from registered service providers, starts
+unsolicited (IdP-initiated) sign-on when it is turned on, and takes part in
+Single Logout in both directions.
+
+> **Scope: applications use OpenID Connect.** SAML sign-on to applications is
+> narrowed until it runs the same gates as OIDC:
+>
+> - **SP-initiated sign-on is not supported.** A valid AuthnRequest is
+>   refused with `403 saml_sp_initiated_unsupported`. The request is still
+>   checked first, so a forged or malformed one gets the errors listed below.
+>   This path sent a browser with no session to a login page that never
+>   resumed it, and issued an assertion to a signed-in one with no MFA policy,
+>   assignment gate or device gate applied.
+> - **IdP-initiated sign-on is off by default.** `GET /saml/idp/sso/unsolicited`
+>   answers `404 saml_idp_disabled` unless `SAML_IDP_ENABLED=true`. The same
+>   gates are missing there, so turn it on only for a service provider you
+>   accept that for.
+>
+> Connect applications with OpenID Connect ([OAuth 2.0 & OIDC](OAUTH-OIDC.md)),
+> which applies MFA policies, `acr_values`, assignment and device trust.
 
 OpenIDX is not a SAML service provider. It does not consume assertions from
 another identity provider, so there is no assertion consumer service in
@@ -16,8 +33,8 @@ SAML messages OpenIDX does receive: AuthnRequests and LogoutRequests.
 | Endpoint | Binding | Purpose |
 | --- | --- | --- |
 | `GET /saml/idp/metadata` | | IdP metadata: entity ID, signing certificate, SSO and SLO endpoints |
-| `GET /saml/idp/sso`, `POST /saml/idp/sso` | HTTP-Redirect, HTTP-POST | SP-initiated sign-on (AuthnRequest in, Response out over HTTP-POST) |
-| `GET /saml/idp/sso/unsolicited?sp_entity_id=<id>&RelayState=<state>` | | IdP-initiated sign-on to a registered service provider |
+| `GET /saml/idp/sso`, `POST /saml/idp/sso` | HTTP-Redirect, HTTP-POST | SP-initiated sign-on: the AuthnRequest is validated, then refused with `403 saml_sp_initiated_unsupported` |
+| `GET /saml/idp/sso/unsolicited?sp_entity_id=<id>&RelayState=<state>` | | IdP-initiated sign-on to a registered service provider. Off unless `SAML_IDP_ENABLED=true` |
 | `GET /saml/idp/slo`, `POST /saml/idp/slo` | HTTP-Redirect, HTTP-POST | Single Logout: a LogoutRequest from an SP, or a request from the signed-in user to log out everywhere |
 | `/api/v1/saml/service-providers` | | Management API: register, update, import metadata, rotate certificates. Needs the `admin` or `super_admin` role; any other caller gets `403`. With `STEPUP_GATE` on, a write also needs a recently verified second factor, as admin-api's writes do (`403 step_up_required`) |
 
@@ -197,6 +214,12 @@ These tests run against the real routes and a migrated PostgreSQL. They are in
   and Keycloak metadata as they publish it.
 
 ## Known limits
+
+- SP-initiated sign-on is refused (`saml_sp_initiated_unsupported`) and
+  IdP-initiated sign-on is off unless `SAML_IDP_ENABLED=true`. Neither path
+  applies MFA policies, application assignment or device trust, and
+  `AuthnContextClassRef`, `ForceAuthn` and `RequestedAuthnContext` are not
+  honoured.
 
 - OpenIDX signs with RSA keys only, and encrypts only to RSA certificates.
 - The Response is always sent over HTTP-POST. HTTP-Artifact is not supported.

@@ -143,6 +143,43 @@ JWT tokens containing user identity claims:
   Core §3.1.2.1 obliges the ID token to carry. Without a session (client
   credentials, a code issued with no session bound) none of the three is
   emitted rather than guessed.
+- `acr`, the strongest authentication context class the login session
+  satisfies when the token is minted (see below). Absent without a session.
+
+### Asking for a stronger sign-in: `acr_values`
+
+A client asks how strongly the person must have signed in with `acr_values`
+on `/oauth/authorize` (OIDC Core §3.1.2.1), and reads what it got from the ID
+token's `acr` claim. Discovery lists the classes in `acr_values_supported`.
+
+| Class | Satisfied by |
+| --- | --- |
+| `urn:openidx:pwd` | any session (the first factor) |
+| `urn:openidx:mfa` | a second factor verified in this session |
+| `urn:openidx:mfa:fresh` | a second factor verified within `STEPUP_MAX_AGE` (or the console's re-authentication interval) |
+| `urn:openidx:phishing-resistant` | a passkey or security key as the second factor (amr `hwk`) |
+
+`acr_values` is a list of alternatives: any one class satisfies the request.
+Unknown classes are ignored. The comparison is made against what the server
+recorded for the session (`sessions.auth_methods`, `sessions.mfa_verified_at`),
+never against the request.
+
+When the session does not satisfy the request, no code is issued yet. The
+person is asked for a second factor (only a passkey for
+`urn:openidx:phishing-resistant`), and the code is issued after it. Backup and
+bypass codes are not offered for this step. Under single sign-on the person
+goes straight to that step without retyping a password. With `prompt=none` the
+client gets `interaction_required` at its `redirect_uri`. An account with no
+factor that could satisfy the request gets
+`unmet_authentication_requirements`.
+
+An application whose access conditions set **Require a fresh second factor**
+(`require_step_up`, `PUT /api/v1/applications/{id}/conditions`) is treated as
+asking for `urn:openidx:mfa:fresh` on every sign-in, whatever the client sent.
+The access proxy applies the same condition to a proxied application: it reads
+the login session behind the proxy session and, when only a fresh factor is
+missing on a `GET`, sends the browser through sign-in again with
+`acr_values=urn:openidx:mfa:fresh` and back to the page.
 
 ### What a scope actually buys
 

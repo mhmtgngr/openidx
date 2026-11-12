@@ -372,6 +372,33 @@ func (s *Service) authorizeFromBrowserSession(c *gin.Context, oauthParams map[st
 		return true
 	}
 
+	// acr_values (acr.go): a session that has not proved what the request
+	// asks for does not short-circuit the login. prompt=none cannot show the
+	// challenge, so it is answered with interaction_required (OIDC Core
+	// §3.1.2.6); otherwise the browser goes to the login page's second-factor
+	// step, without retyping the password the session already proved.
+	if required := s.requiredACR(ctx, oauthParams); len(required) > 0 {
+		a, aerr := s.loadSessionAssurance(ctx, sess.ID)
+		if aerr != nil {
+			writeServerOrUnavailable(c, aerr)
+			return true
+		}
+		if !a.requirementMet(required, time.Now(), s.stepUpWindow(ctx)) {
+			if prompt.None {
+				s.redirectAuthorizeError(c, redirectURI, state, ErrorInteractionRequired, "the session does not satisfy the requested acr_values")
+				return true
+			}
+			challenge := make(map[string]string, len(oauthParams))
+			for k, v := range oauthParams {
+				if k != "session_id" {
+					challenge[k] = v
+				}
+			}
+			s.acrGateAllows(c, challenge, sess.UserID, true)
+			return true
+		}
+	}
+
 	required, cerr2 := s.consentRequired(ctx, oauthParams["client_id"], sess.UserID, oauthParams["scope"])
 	if cerr2 != nil {
 		s.logger.Error("consent check failed", zap.Error(cerr2))

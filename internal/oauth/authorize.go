@@ -44,6 +44,8 @@ type AuthorizeRequest struct {
 	Nonce               string
 	CodeChallenge       string
 	CodeChallengeMethod string
+	// ACRValues is the request's acr_values, the known classes only (acr.go).
+	ACRValues string
 }
 
 // AuthorizeHandler handles OAuth 2.0 authorization code flow with PKCE
@@ -179,6 +181,7 @@ func (h *AuthorizeHandler) oauthParams(req *AuthorizeRequest) map[string]string 
 		"nonce":                 req.Nonce,
 		"code_challenge":        req.CodeChallenge,
 		"code_challenge_method": req.CodeChallengeMethod,
+		paramACRValues:          req.ACRValues,
 	}
 }
 
@@ -193,6 +196,7 @@ func (h *AuthorizeHandler) parseAuthorizeRequest(c *gin.Context) (*AuthorizeRequ
 		Nonce:               c.Query("nonce"),
 		CodeChallenge:       c.Query("code_challenge"),
 		CodeChallengeMethod: c.Query("code_challenge_method"),
+		ACRValues:           normalizedACRValues(c.Query("acr_values")),
 	}
 
 	// Validate required parameters
@@ -332,6 +336,7 @@ func (h *AuthorizeHandler) storeAuthorizationRequest(ctx context.Context, sessio
 		"code_challenge":        req.CodeChallenge,
 		"code_challenge_method": req.CodeChallengeMethod,
 		"client_type":           client.Type,
+		paramACRValues:          req.ACRValues,
 	}
 
 	// Store for 10 minutes

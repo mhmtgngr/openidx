@@ -374,8 +374,6 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid SAMLRequest", "details": err.Error()})
 		return
 	}
-	relayState := msg.relayState
-
 	s.logger.Info("Received SAML AuthnRequest",
 		zap.String("request_id", authnReq.ID),
 		zap.String("issuer", authnReq.Issuer),
@@ -439,8 +437,22 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 		return
 	}
 
-	s.completeSAMLSSO(c, sp, authnReq, relayState)
+	// SP-initiated sign-on is not offered. The request is validated above,
+	// so a forged or malformed one is still answered as such, and a genuine
+	// one is then refused: this path sent an unauthenticated browser to
+	// /login?saml_sso_session=, which nothing reads, and an authenticated one
+	// straight to an assertion with no MFA policy, assignment gate or device
+	// gate applied. Applications use OIDC (docs/docs/guides/SAML.md).
+	s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "failure",
+		"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": errSAMLSPInitiatedUnsupported, "sp_entity_id": sp.EntityID})
+	c.JSON(http.StatusForbidden, gin.H{
+		"error":             errSAMLSPInitiatedUnsupported,
+		"error_description": "SP-initiated SAML sign-on is not supported. Connect this application with OpenID Connect.",
+	})
 }
+
+// errSAMLSPInitiatedUnsupported is the answer to every valid AuthnRequest.
+const errSAMLSPInitiatedUnsupported = "saml_sp_initiated_unsupported"
 
 // handleIdPInitiatedSSO is IdP-initiated ("unsolicited") single sign-on:
 //
@@ -453,6 +465,16 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 // for the service provider to interpret, as SAML Bindings 3.4.3 says.
 func (s *Service) handleIdPInitiatedSSO(c *gin.Context) {
 	ctx := c.Request.Context()
+	// Off unless SAML_IDP_ENABLED: an IdP-initiated assertion is issued
+	// from the browser session alone, with no MFA policy, assignment gate or
+	// device gate in front of it.
+	if s.config == nil || !s.config.SAMLIdPEnabled {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":             "saml_idp_disabled",
+			"error_description": "IdP-initiated SAML sign-on is turned off (SAML_IDP_ENABLED).",
+		})
+		return
+	}
 	entityID := c.Query("sp_entity_id")
 	if entityID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing sp_entity_id parameter"})

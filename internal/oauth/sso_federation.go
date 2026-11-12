@@ -186,13 +186,16 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, q authorizeParams, idpID st
 // nothing (expired, already used, or forged).
 func (s *Service) ssoOriginalParams(ctx context.Context, q authorizeParams, loginSession string) (map[string]string, bool) {
 	keys := []string{"client_id", "redirect_uri", "response_type", "scope", "state",
-		"nonce", "code_challenge", "code_challenge_method", "prompt", "max_age"}
+		"nonce", "code_challenge", "code_challenge_method", "prompt", "max_age", paramACRValues}
 	out := make(map[string]string, len(keys))
 	if loginSession == "" {
 		for _, k := range keys {
 			if v := q.Query(k); v != "" {
 				out[k] = v
 			}
+		}
+		if v := out[paramACRValues]; v != "" {
+			out[paramACRValues] = normalizedACRValues(v)
 		}
 		return out, true
 	}
@@ -439,6 +442,12 @@ func (s *Service) handleCallback(c *gin.Context) {
 	}
 
 	if !s.assignmentGateAllows(c, originalParams["client_id"], user.ID, originalParams["redirect_uri"]) {
+		return
+	}
+	// No OpenIDX session backs this code yet, so a request with acr_values
+	// (or an application that requires step-up) continues at the login page's
+	// second-factor step, which creates one (acr.go).
+	if !s.acrGateAllows(c, pending, user.ID, true) {
 		return
 	}
 

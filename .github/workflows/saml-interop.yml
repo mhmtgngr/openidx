@@ -119,6 +119,8 @@ jobs:
       BROWZER_ENABLED: "false"
       CONTINUOUS_VERIFY_ENABLED: "false"
       OPENIDX_ENABLE_RATE_LIMIT: "false"
+      # IdP-initiated sign-on is off by default (B4.3); the suite exercises it.
+      SAML_IDP_ENABLED: "true"
       GIN_MODE: release
       LOG_LEVEL: info
       KEYCLOAK_ADMIN_PASSWORD: interop-admin-not-a-secret

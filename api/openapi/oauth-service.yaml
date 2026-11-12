@@ -202,6 +202,24 @@ paths:
           schema:
             type: integer
             minimum: 0
+        - name: acr_values
+          in: query
+          description: >-
+            Space-separated authentication context classes, any one of which
+            satisfies the request (OIDC Core §3.1.2.1): `urn:openidx:pwd`,
+            `urn:openidx:mfa` (a second factor in this session),
+            `urn:openidx:mfa:fresh` (a second factor within STEPUP_MAX_AGE) or
+            `urn:openidx:phishing-resistant` (a passkey). Unknown classes are
+            ignored. A session that does not satisfy the request is challenged
+            for a second factor before the code is issued; with no usable
+            factor the login answers `unmet_authentication_requirements`, and
+            under `prompt=none` the redirect carries `interaction_required`.
+            An application whose access conditions set require_step_up is
+            treated as asking for `urn:openidx:mfa:fresh`. The ID token's
+            `acr` claim names the strongest class the session satisfies.
+          schema:
+            type: string
+            example: urn:openidx:mfa
         - name: request
           in: query
           description: >-
@@ -2841,17 +2859,17 @@ paths:
   /saml/idp/sso:
     get:
       tags: [SAML]
-      summary: ID psso
+      summary: SP-initiated SAML sign-on (not supported)
+      description: |
+        The AuthnRequest is validated (known and enabled SP, signature, ACS
+        URL) and a valid one is then refused with 403
+        `saml_sp_initiated_unsupported`. No SAML Response is issued on this
+        path. Connect applications with OpenID Connect.
       operationId: idPSSO
       x-openidx-handler: internal/oauth.(*Service).handleIdPSSO
       responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2860,24 +2878,18 @@ paths:
           $ref: '#/components/responses/ServerError'
     post:
       tags: [SAML]
-      summary: ID psso
+      summary: SP-initiated SAML sign-on, POST binding (not supported)
+      description: Same as GET; a valid AuthnRequest is answered 403 `saml_sp_initiated_unsupported`.
       operationId: idPSSO2
       x-openidx-handler: internal/oauth.(*Service).handleIdPSSO
       requestBody:
         required: false
         content:
-          application/json:
+          application/x-www-form-urlencoded:
             schema:
               type: object
               additionalProperties: true
       responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2894,7 +2906,9 @@ paths:
       description: |
         Issues a signed SAML Response with no InResponseTo to the ACS URL
         registered for the service provider, and to no other URL. A caller who
-        is not signed in is sent to the login page first.
+        is not signed in is sent to the login page first. Off unless
+        SAML_IDP_ENABLED=true (404 `saml_idp_disabled`): the assertion is
+        issued with no MFA policy, assignment gate or device gate in front of it.
       operationId: idPInitiatedSSO
       x-openidx-handler: internal/oauth.(*Service).handleIdPInitiatedSSO
       security: []

@@ -92,16 +92,16 @@ func TestSimpleSAMLphpServiceProvider(t *testing.T) {
 		writeSSPProfile(t, env, profile.encrypt)
 		h.registerSP("SimpleSAMLphp interop", md, profile.encrypt)
 
-		t.Run(profile.name+"/SP-initiated SSO then SP-initiated SLO", func(t *testing.T) {
-			b, token := h.signedInBrowser(alice)
-			checkSession(t, b.get(env.sspURL+"/app/login"), profile.encrypt, false)
-
-			p := b.get(env.sspURL + "/app/logout")
-			if s := sspWhoami(t, p); s.Authenticated {
-				t.Fatalf("still signed in at SimpleSAMLphp after its logout: %+v", s)
+		// SP-initiated sign-on is not offered (B4.3): the AuthnRequest is
+		// refused and SimpleSAMLphp holds no session.
+		t.Run(profile.name+"/SP-initiated SSO is refused", func(t *testing.T) {
+			b, _ := h.signedInBrowser(alice)
+			p := b.get(env.sspURL + "/app/login")
+			if p.status != 403 || !strings.Contains(p.body, "saml_sp_initiated_unsupported") {
+				t.Fatalf("SimpleSAMLphp's AuthnRequest was not refused: %d at %s: %.800s", p.status, p.url, p.body)
 			}
-			if h.sessionAlive(token) {
-				t.Fatal("the IdP session outlived an SP-initiated Single Logout")
+			if s := sspWhoami(t, b.get(whoami)); s.Authenticated {
+				t.Fatalf("signed in at SimpleSAMLphp after a refused AuthnRequest: %+v", s)
 			}
 		})
 

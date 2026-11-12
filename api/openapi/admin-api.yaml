@@ -254,6 +254,62 @@ paths:
         '200':
           description: SSO settings updated
 
+  /api/v1/applications/{id}/conditions:
+    get:
+      tags: [Applications]
+      summary: Get an application's access conditions
+      description: |
+        The application's resource_conditions row: device trust, risk
+        ceiling, allowed countries, a fresh second factor, time window and
+        posture profile. declared is false when no row exists yet. Admin only.
+      operationId: getApplicationConditions
+      x-openidx-handler: internal/admin.(*Service).handleGetApplicationConditions
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Access conditions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationConditions'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Applications]
+      summary: Replace an application's access conditions
+      description: |
+        Upserts the resource_conditions row (legacy_roles is kept) and writes
+        an admin audit entry with the before and after state. require_step_up
+        makes every OIDC sign-in to the application ask for
+        urn:openidx:mfa:fresh, and the access proxy judge it against the
+        login session. Admin only.
+      operationId: putApplicationConditions
+      x-openidx-handler: internal/admin.(*Service).handlePutApplicationConditions
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationConditions'
+      responses:
+        '200':
+          description: Access conditions as stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationConditions'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/v1/directories:
     get:
       tags: [Directories]
@@ -7973,6 +8029,44 @@ components:
             Allow the application's access tokens on OpenIDX's own APIs. It
             takes effect at the application's next token.
 
+    ApplicationConditions:
+      type: object
+      properties:
+        application_id:
+          type: string
+          format: uuid
+          readOnly: true
+        require_device_trust:
+          type: boolean
+        max_risk_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        allowed_countries:
+          type: array
+          description: ISO 3166-1 alpha-2 codes; empty allows any country
+          items:
+            type: string
+        require_step_up:
+          type: boolean
+          description: A fresh second factor (STEPUP_MAX_AGE) at sign-in and at the access proxy
+        time_window:
+          type: object
+          nullable: true
+          additionalProperties: true
+        posture_profile_id:
+          type: string
+          format: uuid
+          nullable: true
+        legacy_roles:
+          type: array
+          readOnly: true
+          items:
+            type: string
+        declared:
+          type: boolean
+          readOnly: true
     ApplicationSSOSettings:
       type: object
       properties:

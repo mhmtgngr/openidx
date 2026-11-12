@@ -106,6 +106,7 @@ var publicQueryParams = map[string]string{
 	"max_age":                  "OIDC Core §3.1.2.1: a number of seconds the client will accept an authentication to be old",
 	"post_logout_redirect_uri": "public; registered per client",
 	"idp":                      "public: which identity provider to use",
+	"acr_values":               "public: an authentication context class name the client asks for (OIDC Core 3.1.2.1), a fixed vocabulary",
 	"idp_hint":                 "public: the same, as a hint",
 	"sp_entity_id":             "public SAML entity identifier",
 	"error":                    "an error code the server itself produced",
