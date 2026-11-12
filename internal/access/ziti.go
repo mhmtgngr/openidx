@@ -1452,6 +1452,27 @@ func (zm *ZitiManager) ReEnrollIdentity(ctx context.Context, zitiID string) (str
 	if err != nil {
 		return "", fmt.Errorf("ziti re-enroll call failed: %w", err)
 	}
+	if statusCode == http.StatusNotFound {
+		// Controllers without /identities/{id}/re-enroll (v1.6.x answers 404)
+		// issue a new one-time enrollment through POST /enrollments instead.
+		// Without this a device whose identity was enrolled under an old
+		// controller address could never be handed one on the current one.
+		expiry := time.Now().Add(7 * 24 * time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
+		body, _ := json.Marshal(map[string]interface{}{"identityId": zitiID, "method": "ott", "expiresAt": expiry})
+		_, statusCode, err = zm.mgmtRequest("POST", "/edge/management/v1/enrollments", body)
+		if err != nil {
+			return "", fmt.Errorf("ziti enrollment create call failed: %w", err)
+		}
+		if statusCode != http.StatusOK && statusCode != http.StatusCreated {
+			return "", fmt.Errorf("ziti enrollment create returned status %d", statusCode)
+		}
+		// v1.6.x does not fold the new enrollment into the identity's
+		// "enrollment" field; it is listed under /identities/{id}/enrollments.
+		if jwt := zm.pendingOTTJWT(ctx, zitiID); jwt != "" {
+			return jwt, nil
+		}
+		return zm.GetIdentityEnrollmentJWT(ctx, zitiID)
+	}
 	if statusCode != http.StatusOK && statusCode != http.StatusCreated && statusCode != http.StatusNoContent {
 		return "", fmt.Errorf("ziti re-enroll returned status %d", statusCode)
 	}
@@ -1479,6 +1500,31 @@ func (zm *ZitiManager) pendingOTTEnrollmentID(ctx context.Context, zitiID string
 	for _, e := range resp.Data {
 		if e.Method == "ott" && e.ID != "" {
 			return e.ID
+		}
+	}
+	return ""
+}
+
+// pendingOTTJWT returns the JWT of the identity's pending OTT enrollment, or
+// "". Best-effort, like pendingOTTEnrollmentID.
+func (zm *ZitiManager) pendingOTTJWT(ctx context.Context, zitiID string) string {
+	respData, statusCode, err := zm.mgmtRequest("GET",
+		fmt.Sprintf("/edge/management/v1/identities/%s/enrollments", zitiID), nil)
+	if err != nil || statusCode != http.StatusOK {
+		return ""
+	}
+	var resp struct {
+		Data []struct {
+			Method string `json:"method"`
+			JWT    string `json:"jwt"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		return ""
+	}
+	for _, e := range resp.Data {
+		if e.Method == "ott" && e.JWT != "" {
+			return e.JWT
 		}
 	}
 	return ""
