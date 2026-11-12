@@ -1770,5 +1770,26 @@ func allMigrations() []*Migration {
 			UpSQL:       sitesUp,
 			DownSQL:     sitesDown,
 		},
+		{
+			Version:     250,
+			Name:        "fleet_tokens_and_tags",
+			Description: "Fleet enrollment tokens as console objects, and device tags. agent_enrollment_tokens gains name, max_uses (NULL = no cap), uses (incremented atomically on each redemption of a reusable token, refused at the cap), default_tags and last_used_at, and a NOT VALID check that a token lives at most 366 days (older ten-year fleet tokens keep working). enrolled_agents gains tags (GIN-indexed) and enrolled_with_token_id. Columns under the tables' existing org policies; down drops them.",
+			UpSQL:       fleetTokensAndTagsUp,
+			DownSQL:     fleetTokensAndTagsDown,
+		},
+		{
+			Version:     251,
+			Name:        "org_agent_settings",
+			Description: "One agent-fleet settings row per organization: claim_mode (login, the default: the person who signs in on the tray claims an unowned device; logged_on_user: the report's session user claims it when they are a directory- or federation-sourced user). Org-scoped under FORCE RLS; down drops the table.",
+			UpSQL:       orgAgentSettingsUp,
+			DownSQL:     orgAgentSettingsDown,
+		},
+		{
+			Version:     252,
+			Name:        "agent_identity_continuity",
+			Description: "One machine stays one agent row. enrolled_agents gains hostname (an attribute, backfilled from metadata), retired_at, reinstated_at, owner_changed_by and owner_changed_at. Duplicate (org_id, device_fingerprint) rows among non-retired agents are collapsed by retiring all but the newest, and the per-tenant fingerprint key is rebuilt to exclude retired rows, so retiring a device frees its fingerprint. Columns under the table's existing org policy; down clears retired rows' fingerprints, restores the key and drops the columns.",
+			UpSQL:       agentIdentityContinuityUp,
+			DownSQL:     agentIdentityContinuityDown,
+		},
 	}
 }

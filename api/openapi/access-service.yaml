@@ -4026,6 +4026,79 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/agent/claim:
+    post:
+      tags: [Agent Enrollment]
+      summary: Claim an ownerless device for the signed-in user
+      description: >-
+        Called by the tray after sign-in. Carries the device credential
+        (X-Agent-ID + X-Auth-Token) and the person's bearer token. An active,
+        ownerless device in the same organization becomes the caller's and is
+        bound to the caller's session. 409 agent_owned_by_another_user when
+        someone else owns it, 403 agent_other_org across organizations.
+      operationId: handleClaimAgent
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleClaimAgent
+      responses:
+        '200':
+          description: Claimed (or already the caller's)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent_id: {type: string}
+                  owner_user_id: {type: string}
+                  claimed: {type: boolean}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Device revoked or in another organization
+        '409':
+          description: Device belongs to another user or is not active
+  /api/v1/access/agent/settings:
+    get:
+      tags: [Agent Enrollment]
+      summary: Get the organization's agent settings
+      operationId: handleGetAgentSettings
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleGetAgentSettings
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  claim_mode: {type: string, enum: [login, logged_on_user]}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [Agent Enrollment]
+      summary: Update the organization's agent settings (admin, fresh MFA)
+      operationId: handleUpdateAgentSettings
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleUpdateAgentSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [claim_mode]
+              properties:
+                claim_mode: {type: string, enum: [login, logged_on_user]}
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  claim_mode: {type: string}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/v1/access/agent/enroll/oauth:
     post:
       tags: [Agent Enrollment]
@@ -4327,13 +4400,24 @@ paths:
       summary: Handle generate token
       operationId: handleGenerateToken
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleGenerateToken
+      description: >-
+        Mints an enrollment token and returns the plaintext once. A reusable (fleet)
+        token defaults to 90 days, is exempt from the hourly enrolment quota, counts
+        each use and is refused at max_uses; default_tags are stamped on every device
+        it enrols. Minting requires a fresh MFA when the step-up gate is on.
       requestBody:
         required: false
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                name: {type: string, maxLength: 255}
+                description: {type: string}
+                reusable: {type: boolean}
+                ttl_hours: {type: integer, minimum: 1, maximum: 8760, description: "Default 24 (single-use) or 2160 (fleet)."}
+                max_uses: {type: integer, minimum: 0, description: "Fleet tokens only; 0 = no limit."}
+                default_tags: {type: array, items: {type: string, maxLength: 64}, maxItems: 32}
       responses:
         '200':
           description: Success
@@ -4433,6 +4517,14 @@ paths:
         revoked), with credential_refused_at the latest refusal.
       operationId: handleListAgents
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleListAgents
+      parameters:
+        - name: include_retired
+          in: query
+          required: false
+          description: 1 to include retired devices (hidden by default).
+          schema:
+            type: string
+            enum: ['1']
       responses:
         '200':
           description: Success
@@ -4460,6 +4552,14 @@ paths:
       summary: Handle revoke agent
       operationId: handleRevokeAgent
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleRevokeAgent
+      description: Revokes the device. With purge=1 deletes a retired device's row instead (fresh MFA).
+      parameters:
+        - name: purge
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ['1']
       responses:
         '200':
           description: Success
@@ -4514,6 +4614,115 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents/{agent_id}/owner:
+    parameters:
+      - name: agent_id
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [Agent Fleet]
+      summary: Reassign a device to another user (fresh MFA)
+      operationId: handleReassignAgentOwner
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReassignAgentOwner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id:
+                  type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The device is not in a state that allows this
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents/{agent_id}/reinstate:
+    parameters:
+      - name: agent_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Agent Fleet]
+      summary: Lift a revoke so the device may enrol again (fresh MFA)
+      operationId: handleReinstateAgent
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReinstateAgent
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The device is not in a state that allows this
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents/{agent_id}/retire:
+    parameters:
+      - name: agent_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Agent Fleet]
+      summary: Retire a device and free its fingerprint (fresh MFA)
+      operationId: handleRetireAgent
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleRetireAgent
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The device is not in a state that allows this
         '500':
           $ref: '#/components/responses/ServerError'
 

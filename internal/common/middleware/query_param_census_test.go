@@ -53,8 +53,10 @@ var publicQueryParams = map[string]string{
 	"device_trusted": "policy tester situation", "risk": "policy tester situation",
 	"country": "policy tester situation", "fresh_mfa": "policy tester situation",
 	// The network-resource CSV import's "validate only" switch: a boolean.
-	"dry_run": "request mode (validate without writing)",
-	"start":   "time window", "end": "time window", "start_date": "time window",
+	"dry_run":         "request mode (validate without writing)",
+	"include_retired": "list filter flag (boolean, show retired agents)",
+	"purge":           "request mode flag (boolean, hard-delete instead of retire)",
+	"start":           "time window", "end": "time window", "start_date": "time window",
 	"end_date": "time window", "start_time": "time window", "end_time": "time window",
 	"since": "time window", "from": "time window", "to": "time window",
 	"days": "time window", "period": "time window", "threshold_days": "time window",

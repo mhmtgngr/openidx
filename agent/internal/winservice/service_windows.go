@@ -131,6 +131,7 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 		// support runs in the TRAY (user session) instead; the service only does
 		// posture/enrollment/self-update.
 		a.DisableRemoteSupport = true
+		a.LoggedOnUser = consoleLogonUser
 		a.RegisterBuiltinChecks()
 		a.LoadPlugins()
 		h.mu.Lock()

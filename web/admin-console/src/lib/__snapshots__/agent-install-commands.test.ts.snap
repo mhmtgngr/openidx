@@ -1,0 +1,57 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`installCommands > renders the gpo commands 1`] = `
+[
+  {
+    "label": "download",
+    "value": "https://idp.example.com/downloads/openidx-agent.msi",
+  },
+  {
+    "label": "startupScript",
+    "value": "msiexec.exe /i "\\\\<fileserver>\\<share>\\openidx-agent.msi" /qn /norestart SERVER_URL="https://idp.example.com" ENROLL_TOKEN="11111111-2222-3333-4444-555555555555" KEEP_ENROLL_TOKEN=1",
+  },
+]
+`;
+
+exports[`installCommands > renders the intune commands 1`] = `
+[
+  {
+    "label": "download",
+    "value": "https://idp.example.com/downloads/Install-OpenIDXAgent.ps1",
+  },
+  {
+    "label": "installCommand",
+    "value": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\Install-OpenIDXAgent.ps1 -ServerUrl 'https://idp.example.com' -EnrollToken '11111111-2222-3333-4444-555555555555'",
+  },
+  {
+    "label": "uninstallCommand",
+    "value": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\Install-OpenIDXAgent.ps1 -Uninstall",
+  },
+  {
+    "label": "detectionScript",
+    "value": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\Install-OpenIDXAgent.ps1 -Detect",
+  },
+]
+`;
+
+exports[`installCommands > renders the linux commands 1`] = `
+[
+  {
+    "label": "shell",
+    "value": "curl -fsSL 'https://idp.example.com/downloads/install.sh' | sudo sh -s -- --server 'https://idp.example.com' --code '11111111-2222-3333-4444-555555555555'",
+  },
+]
+`;
+
+exports[`installCommands > renders the manual commands 1`] = `
+[
+  {
+    "label": "elevatedPowerShell",
+    "value": "Invoke-WebRequest -UseBasicParsing 'https://idp.example.com/downloads/Install-OpenIDXAgent.ps1' -OutFile "$env:TEMP\\Install-OpenIDXAgent.ps1"; & "$env:TEMP\\Install-OpenIDXAgent.ps1" -ServerUrl 'https://idp.example.com' -EnrollToken '11111111-2222-3333-4444-555555555555'",
+  },
+  {
+    "label": "msiDirect",
+    "value": "msiexec.exe /i openidx-agent.msi /qn /norestart SERVER_URL="https://idp.example.com" ENROLL_TOKEN="11111111-2222-3333-4444-555555555555" KEEP_ENROLL_TOKEN=1",
+  },
+]
+`;

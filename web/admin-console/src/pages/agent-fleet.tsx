@@ -28,6 +28,7 @@ import {
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { AgentChecksSection } from '../components/agent-checks-section'
+import { FleetTokensSection } from '../components/fleet-tokens-section'
 import { TunnelPolicyBadge, TunnelStatusBadge, type TunnelStatus } from '../components/tunnel-status-badge'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -368,6 +369,9 @@ export function AgentFleetPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Fleet enrollment tokens and the one-time Deploy panel. */}
+      <FleetTokensSection />
 
       {/* What the enrolled agents are told to check. */}
       <AgentChecksSection />

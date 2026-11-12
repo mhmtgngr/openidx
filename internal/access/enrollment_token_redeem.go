@@ -35,8 +35,8 @@ import (
 // the verdict -- zero means another redemption got there first, or the token
 // was already spent, and the caller is refused. A token that cannot be spent
 // (the UPDATE fails) is not a token that may be used, so that error is returned
-// rather than logged. Reusable (fleet/MDM bootstrap) tokens are never spent and
-// are checked for revocation and expiry only.
+// rather than logged. Reusable (fleet/MDM bootstrap) tokens are never spent;
+// since v250 each redemption counts a use, refused at max_uses.
 
 // Since v197 the token table is per-tenant and belted. An agent redeeming a
 // token arrives with no tenant -- no JWT, no subdomain the resolver can trust
@@ -59,6 +59,8 @@ type redeemedEnrollmentToken struct {
 	// OrgID is the tenant the token was minted in, and therefore the tenant the
 	// device enrols into (v197).
 	OrgID string
+	// DefaultTags are the tags a fleet token stamps on the device (v250).
+	DefaultTags []string
 }
 
 // Refusals a caller may show the client. Anything else the redeemer returns
@@ -69,6 +71,8 @@ var (
 	errEnrollmentTokenRevoked = enrollError{"enrollment token has been revoked"}
 	errEnrollmentTokenExpired = enrollError{"enrollment token has expired"}
 	errEnrollmentTokenUsed    = enrollError{"enrollment token has already been used"}
+	// A fleet token that has enrolled its max_uses devices (v250).
+	errEnrollmentTokenExhausted = enrollError{"enrollment token has reached its maximum number of uses"}
 )
 
 // redeemEnrollmentToken looks the presented token up by its hash, refuses it
@@ -107,6 +111,23 @@ func redeemEnrollmentToken(ctx context.Context, store enrollTokenStore, token st
 		return redeemedEnrollmentToken{}, errEnrollmentTokenExpired
 	}
 	if out.Reusable {
+		// A fleet token counts its uses, and the count is the claim: the
+		// increment and the cap are one statement, so N devices racing for the
+		// last use of a max_uses token admit exactly one of them. A token with
+		// no cap (max_uses NULL) still counts.
+		err := store.QueryRow(ctx, `
+			UPDATE agent_enrollment_tokens
+			   SET uses = uses + 1, last_used_at = NOW()
+			 WHERE id = $1 AND org_id = $2
+			   AND (max_uses IS NULL OR uses < max_uses)
+			RETURNING COALESCE(default_tags, '{}')
+		`, out.ID, out.OrgID).Scan(&out.DefaultTags)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return redeemedEnrollmentToken{}, errEnrollmentTokenExhausted
+		}
+		if err != nil {
+			return redeemedEnrollmentToken{}, fmt.Errorf("count fleet enrollment token use: %w", err)
+		}
 		return out, nil
 	}
 

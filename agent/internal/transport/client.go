@@ -95,13 +95,19 @@ func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 	url := c.baseURL + "/api/v1/access/agent/enroll"
 
 	hostname, _ := os.Hostname()
+	fp, prev := deviceFingerprints(hostname)
 	fields := map[string]interface{}{
 		"token":              token,
 		"hostname":           hostname,
 		"os":                 runtime.GOOS,
 		"arch":               runtime.GOARCH,
 		"platform":           runtime.GOOS + "/" + runtime.GOARCH,
-		"device_fingerprint": deviceFingerprint(hostname),
+		"device_fingerprint": fp,
+	}
+	if prev != "" {
+		// The fingerprint this machine had before v2 (fingerprint.go), so the
+		// server moves its row over. Sent for at least three releases.
+		fields["device_fingerprint_prev"] = prev
 	}
 	if c.enrollKey != "" {
 		// A server that predates device keys ignores the field.
@@ -254,4 +260,48 @@ func (c *Client) SendConsent(sessionID, decision string) error {
 // support falls back to a public WebSocket dial when this returns an error.
 func (c *Client) DialServiceConn(serviceName string) (net.Conn, error) {
 	return nil, fmt.Errorf("ziti service dial not supported on HTTPS transport")
+}
+
+// ClaimResult is the server's answer to a successful claim.
+type ClaimResult struct {
+	AgentID     string `json:"agent_id"`
+	OwnerUserID string `json:"owner_user_id"`
+	// Claimed is true when this call made the device the person's; false
+	// when it already was.
+	Claimed bool `json:"claimed"`
+}
+
+// ErrClaimOwnedByAnother is a claim refused because the device already
+// belongs to someone else in the organization (409).
+var ErrClaimOwnedByAnother = errors.New("this device belongs to another person")
+
+// Claim makes this device the signed-in person's
+// (POST /api/v1/access/agent/claim). It carries both credentials: the
+// device's own (X-Agent-ID + X-Auth-Token) and the person's access token.
+func (c *Client) Claim(accessToken string) (*ClaimResult, error) {
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v1/access/agent/claim", nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating claim request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Agent-ID", c.agentID)
+	req.Header.Set("X-Auth-Token", c.authToken)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sending claim request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusConflict:
+		return nil, ErrClaimOwnedByAnother
+	case resp.StatusCode == http.StatusForbidden:
+		return nil, fmt.Errorf("claim refused (403)")
+	case resp.StatusCode < 200 || resp.StatusCode >= 300:
+		return nil, fmt.Errorf("claim request failed with status %d", resp.StatusCode)
+	}
+	var out ClaimResult
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err != nil {
+		return nil, fmt.Errorf("parsing claim response: %w", err)
+	}
+	return &out, nil
 }
