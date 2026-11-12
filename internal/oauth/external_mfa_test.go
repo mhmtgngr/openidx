@@ -45,7 +45,7 @@ func TestHoldExternalToStrongFactors(t *testing.T) {
 		t.Errorf("required methods = %v, want %v", got.RequiredMethods, want)
 	}
 	// Inline enrolment offers what the login page can set up, never a code.
-	if m := inlineEnrollMethods(got, "external"); !reflect.DeepEqual(m, []string{"totp", "webauthn"}) {
+	if m := inlineEnrollMethods(got, "external", true); !reflect.DeepEqual(m, []string{"totp", "webauthn"}) {
 		t.Errorf("inline enrolment for an external user = %v, want [totp webauthn]", m)
 	}
 }
@@ -55,15 +55,21 @@ func TestInlineEnrollMethodsNeverOfferCodes(t *testing.T) {
 		ev   mfaEvaluation
 		typ  string
 		want []string
+		sms  bool
 	}{
-		{mfaEvaluation{RequiredMethods: []string{"email", "sms"}}, "internal", []string{}},
-		{mfaEvaluation{RequiredMethods: []string{"email", "totp"}}, "internal", []string{"totp"}},
-		{mfaEvaluation{}, "internal", []string{"totp", "webauthn"}},
-		{mfaEvaluation{RequiredMethods: []string{"email"}, External: true}, "external", []string{}},
-		{mfaEvaluation{RequiredMethods: []string{"push", "webauthn"}}, "", []string{"webauthn"}},
+		{mfaEvaluation{RequiredMethods: []string{"email", "sms"}}, "internal", []string{}, false},
+		{mfaEvaluation{RequiredMethods: []string{"email", "totp"}}, "internal", []string{"totp"}, false},
+		{mfaEvaluation{}, "internal", []string{"totp", "webauthn"}, false},
+		{mfaEvaluation{RequiredMethods: []string{"email"}, External: true}, "external", []string{}, false},
+		{mfaEvaluation{RequiredMethods: []string{"push", "webauthn"}}, "", []string{"webauthn"}, false},
+		// SMS only when deliverable, only when named, never for external users.
+		{mfaEvaluation{RequiredMethods: []string{"sms", "totp"}}, "internal", []string{"sms", "totp"}, true},
+		{mfaEvaluation{RequiredMethods: []string{"sms"}}, "internal", []string{}, false},
+		{mfaEvaluation{}, "internal", []string{"totp", "webauthn"}, true},
+		{mfaEvaluation{RequiredMethods: []string{"sms", "totp"}, External: true}, "external", []string{"totp"}, true},
 	}
 	for _, c := range cases {
-		if got := inlineEnrollMethods(c.ev, c.typ); !reflect.DeepEqual(got, c.want) {
+		if got := inlineEnrollMethods(c.ev, c.typ, c.sms); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("inlineEnrollMethods(%v, %q) = %v, want %v", c.ev.RequiredMethods, c.typ, got, c.want)
 		}
 	}

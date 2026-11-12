@@ -2100,6 +2100,68 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /oauth/mfa/enroll/sms/begin:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA inline enrolment SMS begin
+      description: Inline enrolment of a factor an MFA policy requires, against the enroll_session POST /oauth/login answers with (MFA_INLINE_ENROLLMENT). Public; the enrol session is the credential. Body {enroll_session, phone_number, country_code}; offered only when SMS is deliverable (enabled, non-mock provider) and never to external users. Stores an unverified SMS factor and texts the code.
+      operationId: mfaEnrollSMSBegin
+      x-openidx-handler: internal/oauth.(*Service).handleMFAEnrollSMSBegin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many attempts; the enrolment session is closed.
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/mfa/enroll/sms/finish:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA inline enrolment SMS finish
+      description: Inline enrolment of a factor an MFA policy requires, against the enroll_session POST /oauth/login answers with (MFA_INLINE_ENROLLMENT). Public; the enrol session is the credential. Body {enroll_session, code}. Verifies the texted code, stores the factor and answers like a completed sign-in, with backup_codes.
+      operationId: mfaEnrollSMSFinish
+      x-openidx-handler: internal/oauth.(*Service).handleMFAEnrollSMSFinish
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many attempts; the enrolment session is closed.
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /oauth/mfa/enroll/webauthn/begin:
     post:
       tags: [Step-up and MFA]

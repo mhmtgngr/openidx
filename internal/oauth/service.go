@@ -1697,6 +1697,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 		// enroll_session POST /oauth/login answers with (mfa_enroll_inline.go).
 		oauth.POST("/mfa/enroll/totp/begin", svc.handleMFAEnrollTOTPBegin)
 		oauth.POST("/mfa/enroll/totp/finish", noStore, svc.handleMFAEnrollTOTPFinish)
+		oauth.POST("/mfa/enroll/sms/begin", svc.handleMFAEnrollSMSBegin)
+		oauth.POST("/mfa/enroll/sms/finish", noStore, svc.handleMFAEnrollSMSFinish)
 		oauth.POST("/mfa/enroll/webauthn/begin", svc.handleMFAEnrollWebAuthnBegin)
 		oauth.POST("/mfa/enroll/webauthn/finish", noStore, svc.handleMFAEnrollWebAuthnFinish)
 

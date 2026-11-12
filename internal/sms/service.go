@@ -489,3 +489,10 @@ func truncate(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
+
+// Ready reports whether this service really delivers: sending is enabled and
+// the provider is not the mock (which delivers nothing). Callers that offer
+// SMS as a factor check this before offering it.
+func (s *Service) Ready() bool {
+	return s != nil && s.config.Enabled && s.provider != nil && s.provider.Name() != "mock"
+}
