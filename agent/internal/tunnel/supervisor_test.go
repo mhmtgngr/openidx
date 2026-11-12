@@ -181,6 +181,9 @@ func TestStartsTunnelerWithIdentityDirAndReportsConnected(t *testing.T) {
 		t.Errorf("last_seen = %v, want recent", st.LastSeen)
 	}
 
+	// The status file is written before the supervisor runs, so "connected"
+	// can be read before the child has appended its start line. Wait for it.
+	eventually(t, "the tunneler's start record", func() bool { return len(e.starts(t)) >= 1 })
 	starts := e.starts(t)
 	if len(starts) != 1 {
 		t.Fatalf("starts = %v, want exactly one", starts)
