@@ -136,6 +136,15 @@ func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
 	if code, pol = do("PUT", "/api/v1/access/network-policy", `{"always_on":true}`); code != http.StatusOK || pol["always_on"] != true || pol["split_tunnel"] != true {
 		t.Errorf("put policy answered %d: %v", code, pol)
 	}
+	if code, pol = do("PUT", "/api/v1/access/network-policy", `{"tunnel_scope":"bogus"}`); code != http.StatusBadRequest {
+		t.Errorf("PUT a bad tunnel_scope = %d, want 400", code)
+	}
+	if code, pol = do("PUT", "/api/v1/access/network-policy", `{"tunnel_scope":"tagged","tunnel_tags":[" eng ","eng","ops"]}`); code != http.StatusOK || pol["always_on"] != false || pol["tunnel_scope"] != "tagged" || len(pol["tunnel_tags"].([]interface{})) != 2 {
+		t.Errorf("PUT tunnel_scope tagged = %d %v", code, pol)
+	}
+	if code, pol = do("PUT", "/api/v1/access/network-policy", `{"tunnel_scope":"all"}`); code != http.StatusOK || pol["always_on"] != true {
+		t.Errorf("PUT tunnel_scope all = %d %v", code, pol)
+	}
 	if code, pol = do("PUT", "/api/v1/access/network-policy", `{"split_tunnel":false}`); code != http.StatusOK || pol["always_on"] != true || pol["split_tunnel"] != false {
 		t.Errorf("a second partial update answered %d: %v", code, pol)
 	}

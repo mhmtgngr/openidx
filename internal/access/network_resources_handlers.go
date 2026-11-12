@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -43,6 +44,10 @@ type networkPolicyView struct {
 	AlwaysOn                  bool   `json:"always_on"`
 	SplitTunnel               bool   `json:"split_tunnel"`
 	BlockDirectCorporateCIDRs bool   `json:"block_direct_corporate_cidrs"`
+	// TunnelScope is who the tunnel turns on for: "all", "tagged" (devices
+	// carrying one of TunnelTags) or "off". AlwaysOn is TunnelScope == "all".
+	TunnelScope string   `json:"tunnel_scope"`
+	TunnelTags  []string `json:"tunnel_tags"`
 	UpdatedAt                 string `json:"updated_at,omitempty"`
 	// Version is the policy version devices receive (tunnel_policy.go), and
 	// Devices how many active devices report applying it. Both are absent
@@ -54,13 +59,13 @@ type networkPolicyView struct {
 // withRollout fills v's Version and Devices. Best-effort: a failure is logged
 // and leaves them empty.
 func (s *Service) withRollout(ctx context.Context, orgID string, v *networkPolicyView) {
-	p, err := loadAgentNetworkPolicy(ctx, s.db, orgID)
+	o, err := loadOrgTunnelPolicy(ctx, s.db, orgID)
 	if err != nil {
 		s.logger.Warn("network policy: could not compute the version devices receive", zap.Error(err))
 		return
 	}
-	v.Version = p.Version
-	d, err := countTunnelPolicyDevices(ctx, s.db, orgID, p.Version)
+	v.Version = o.forDevice(nil).Version
+	d, err := countTunnelPolicyDevices(ctx, s.db, orgID, o)
 	if err != nil {
 		s.logger.Warn("network policy: could not count the devices that applied it", zap.Error(err))
 		return
@@ -426,12 +431,13 @@ func (s *Service) handleGetNetworkPolicy(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	v := networkPolicyView{SplitTunnel: true}
+	v := networkPolicyView{SplitTunnel: true, TunnelScope: tunnelScopeTagged, TunnelTags: []string{}}
 	var updated *string
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT always_on, split_tunnel, block_direct_corporate_cidrs, to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')
+		`SELECT tunnel_scope = 'all', split_tunnel, block_direct_corporate_cidrs, tunnel_scope, tunnel_tags,
+		        to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')
 		   FROM org_network_policy WHERE org_id = $1`, org.ID).
-		Scan(&v.AlwaysOn, &v.SplitTunnel, &v.BlockDirectCorporateCIDRs, &updated)
+		Scan(&v.AlwaysOn, &v.SplitTunnel, &v.BlockDirectCorporateCIDRs, &v.TunnelScope, &v.TunnelTags, &updated)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		s.logger.Error("read network policy", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read network policy"})
@@ -450,10 +456,17 @@ func (s *Service) handlePutNetworkPolicy(c *gin.Context) {
 	var req struct {
 		AlwaysOn                  *bool `json:"always_on"`
 		SplitTunnel               *bool `json:"split_tunnel"`
-		BlockDirectCorporateCIDRs *bool `json:"block_direct_corporate_cidrs"`
+		BlockDirectCorporateCIDRs *bool     `json:"block_direct_corporate_cidrs"`
+		TunnelScope               *string   `json:"tunnel_scope"`
+		TunnelTags                *[]string `json:"tunnel_tags"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	scope, tags, msg := normalizeTunnelScope(req.AlwaysOn, req.TunnelScope, req.TunnelTags)
+	if msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
 	ctx := c.Request.Context()
@@ -470,16 +483,18 @@ func (s *Service) handlePutNetworkPolicy(c *gin.Context) {
 	}
 	var v networkPolicyView
 	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO org_network_policy (org_id, always_on, split_tunnel, block_direct_corporate_cidrs, updated_by)
-		 VALUES ($1, COALESCE($2, false), COALESCE($3, true), COALESCE($4, false), $5)
+		`INSERT INTO org_network_policy (org_id, always_on, split_tunnel, block_direct_corporate_cidrs, updated_by, tunnel_scope, tunnel_tags)
+		 VALUES ($1, COALESCE($2::text, 'tagged') = 'all', COALESCE($3, true), COALESCE($4, false), $5, COALESCE($2::text, 'tagged'), COALESCE($6::text[], '{}'))
 		 ON CONFLICT (org_id) DO UPDATE SET
-		   always_on = COALESCE($2, org_network_policy.always_on),
+		   tunnel_scope = COALESCE($2::text, org_network_policy.tunnel_scope),
+		   always_on = COALESCE($2::text, org_network_policy.tunnel_scope) = 'all',
+		   tunnel_tags = COALESCE($6::text[], org_network_policy.tunnel_tags),
 		   split_tunnel = COALESCE($3, org_network_policy.split_tunnel),
 		   block_direct_corporate_cidrs = COALESCE($4, org_network_policy.block_direct_corporate_cidrs),
 		   updated_by = $5, updated_at = NOW()
-		 RETURNING always_on, split_tunnel, block_direct_corporate_cidrs, to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')`,
-		org.ID, req.AlwaysOn, req.SplitTunnel, req.BlockDirectCorporateCIDRs, updatedBy).
-		Scan(&v.AlwaysOn, &v.SplitTunnel, &v.BlockDirectCorporateCIDRs, &v.UpdatedAt)
+		 RETURNING always_on, split_tunnel, block_direct_corporate_cidrs, tunnel_scope, tunnel_tags, to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')`,
+		org.ID, scope, req.SplitTunnel, req.BlockDirectCorporateCIDRs, updatedBy, tags).
+		Scan(&v.AlwaysOn, &v.SplitTunnel, &v.BlockDirectCorporateCIDRs, &v.TunnelScope, &v.TunnelTags, &v.UpdatedAt)
 	if err != nil {
 		s.logger.Error("save network policy", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save network policy"})
@@ -487,9 +502,50 @@ func (s *Service) handlePutNetworkPolicy(c *gin.Context) {
 	}
 	s.logAuditEvent(c, "network_policy.update", org.ID, "organization", map[string]interface{}{
 		"always_on": v.AlwaysOn, "split_tunnel": v.SplitTunnel, "block_direct_corporate_cidrs": v.BlockDirectCorporateCIDRs,
+		"tunnel_scope": v.TunnelScope, "tunnel_tags": v.TunnelTags,
 	})
 	s.withRollout(ctx, org.ID, &v)
 	c.JSON(http.StatusOK, v)
+}
+
+// normalizeTunnelScope validates the scope fields of a PUT. tunnel_scope wins;
+// a request with only the older always_on maps true to "all" and false to
+// "off". Tags are trimmed, deduplicated and sorted. nil means "keep stored".
+func normalizeTunnelScope(alwaysOn *bool, scope *string, tags *[]string) (*string, []string, string) {
+	var sc *string
+	if scope != nil {
+		v := strings.TrimSpace(*scope)
+		if v != tunnelScopeAll && v != tunnelScopeTagged && v != tunnelScopeOff {
+			return nil, nil, "tunnel_scope must be one of all, tagged, off"
+		}
+		sc = &v
+	} else if alwaysOn != nil {
+		v := tunnelScopeOff
+		if *alwaysOn {
+			v = tunnelScopeAll
+		}
+		sc = &v
+	}
+	var out []string
+	if tags != nil {
+		seen := map[string]bool{}
+		out = []string{}
+		for _, t := range *tags {
+			t = strings.TrimSpace(t)
+			if t == "" || len(t) > 64 {
+				return nil, nil, "tunnel_tags entries must be 1 to 64 characters"
+			}
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+		}
+		if len(out) > maxTunnelTags {
+			return nil, nil, fmt.Sprintf("at most %d tunnel_tags", maxTunnelTags)
+		}
+		sort.Strings(out)
+	}
+	return sc, out, ""
 }
 
 // ---- CSV import ----

@@ -1812,5 +1812,12 @@ func allMigrations() []*Migration {
 			UpSQL:       postureCheckTagsUp,
 			DownSQL:     postureCheckTagsDown,
 		},
+		{
+			Version:     256,
+			Name:        "tunnel_scope",
+			Description: "The tunnel turns on per group of devices. org_network_policy gains tunnel_scope ('all', 'tagged', 'off'; default 'tagged') and tunnel_tags (TEXT[], default empty); each device's effective always_on is true for 'all', true for 'tagged' when its tags intersect tunnel_tags, false for 'off'. Backfill: always_on=true becomes 'all', otherwise 'off'. always_on is kept, equal to tunnel_scope='all'. Columns under the table's existing org policy; down drops them.",
+			UpSQL:       tunnelScopeUp,
+			DownSQL:     tunnelScopeDown,
+		},
 	}
 }

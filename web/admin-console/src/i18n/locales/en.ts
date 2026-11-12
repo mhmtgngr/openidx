@@ -6880,6 +6880,15 @@ const en = {
       policy: {
         title: 'Network policy',
         subtitle: "How your organization's devices use the tunnel.",
+        scope: {
+          title: 'Tunnel turns on for',
+          hint: 'Devices in scope start the tunnel with the device and cannot turn it off.',
+          all: 'Everyone',
+          tagged: 'Devices with these tags',
+          off: 'Nobody',
+          noTags: 'No device carries a tag yet. Tag devices on the Agent Fleet page.',
+          noneChosen: 'No tag chosen: the tunnel turns on for no device.',
+        },
         always_on: 'Always on',
         always_onHint: 'The tunnel starts with the device and cannot be turned off by the user.',
         split_tunnel: 'Split tunnel',

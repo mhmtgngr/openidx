@@ -87,8 +87,9 @@ describe('NetworkResourcesPanel', () => {
     vi.mocked(api.get).mockImplementation((url: string) => {
       if (url.endsWith('/network-resources')) return Promise.resolve({ resources: [resource], total: 1 })
       if (url.endsWith('/network-policy')) {
-        return Promise.resolve({ always_on: false, split_tunnel: true, block_direct_corporate_cidrs: false })
+        return Promise.resolve({ always_on: false, tunnel_scope: 'tagged', tunnel_tags: ['eng'], split_tunnel: true, block_direct_corporate_cidrs: false })
       }
+      if (url.endsWith('/agents')) return Promise.resolve([{ tags: ['eng', 'laptops'] }, { tags: null }])
       return Promise.resolve([])
     })
   })
@@ -101,7 +102,7 @@ describe('NetworkResourcesPanel', () => {
     expect(screen.getByText('Synced')).toBeInTheDocument()
     expect(await screen.findByText('Network policy')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('switch', { name: 'Split tunnel' })).toBeChecked())
-    expect(screen.getByRole('switch', { name: 'Always on' })).not.toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Devices with these tags' })).toBeChecked()
   })
 
   it('creates a resource with its network target', async () => {
@@ -160,13 +161,19 @@ describe('NetworkResourcesPanel', () => {
     expect(screen.getByTestId('np-block-scope')).toHaveTextContent('Linux')
   })
 
-  it('changes the network policy one switch at a time', async () => {
-    vi.mocked(api.put).mockResolvedValue({ always_on: true, split_tunnel: true, block_direct_corporate_cidrs: false })
+  it('sets who the tunnel turns on for', async () => {
+    vi.mocked(api.put).mockResolvedValue({ always_on: true, tunnel_scope: 'all', tunnel_tags: [], split_tunnel: true, block_direct_corporate_cidrs: false })
     render(<NetworkResourcesPanel />, { wrapper: wrapper() })
-    const always = await screen.findByRole('switch', { name: 'Always on' })
-    fireEvent.click(always)
+    expect(await screen.findByRole('radio', { name: 'Devices with these tags' })).toBeChecked()
+    const laptops = await screen.findByRole('checkbox', { name: 'laptops' })
+    expect(screen.getByRole('checkbox', { name: 'eng' })).toBeChecked()
+    fireEvent.click(laptops)
     await waitFor(() =>
-      expect(api.put).toHaveBeenCalledWith('/api/v1/access/network-policy', { always_on: true }),
+      expect(api.put).toHaveBeenCalledWith('/api/v1/access/network-policy', { tunnel_tags: ['eng', 'laptops'] }),
+    )
+    fireEvent.click(await screen.findByRole('radio', { name: 'Nobody' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/v1/access/network-policy', { tunnel_scope: 'off' }),
     )
   })
 })

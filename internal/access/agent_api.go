@@ -1808,7 +1808,12 @@ func (h *AgentAPIHandler) policyForActiveAgent(ctx context.Context, agentID stri
 		agentID, orgID).Scan(&status); err != nil || status != "active" {
 		return nil
 	}
-	return h.orgNetworkPolicy(ctx)
+	p, err := loadDeviceNetworkPolicy(ctx, h.db, orgID, agentID)
+	if err != nil {
+		h.logger.Warn("could not read the tunnel policy for an agent", zap.Error(err))
+		return nil
+	}
+	return p
 }
 
 // orgNetworkPolicy is the caller's organization's tunnel policy, or nil when
@@ -2343,9 +2348,11 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 
 	// The current policy version, to say which devices run it. Unknown when
 	// it cannot be read: every device's state is then "".
-	current := ""
-	if p := h.orgNetworkPolicy(ctx); p != nil {
-		current = p.Version
+	var orgTunnel *orgTunnelPolicy
+	if h.db != nil && h.db.Pool != nil {
+		if o, err := loadOrgTunnelPolicy(ctx, h.db, orgIDFrom(ctx)); err == nil {
+			orgTunnel = o
+		}
 	}
 
 	var timeout time.Duration
@@ -2394,6 +2401,10 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		}
 		if len(updateRaw) > 0 {
 			rec.UpdateState = json.RawMessage(updateRaw)
+		}
+		current := ""
+		if orgTunnel != nil {
+			current = orgTunnel.forDevice(rec.Tags).Version
 		}
 		rec.TunnelPolicyState = tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, current)
 		rec.CredentialRefused = credentialRefused(authFailCount, rec.Status)

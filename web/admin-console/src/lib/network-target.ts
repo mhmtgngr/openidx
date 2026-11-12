@@ -28,8 +28,14 @@ export interface NetworkResource {
   sync_status?: string
 }
 
+export type TunnelScope = 'all' | 'tagged' | 'off'
+
 export interface NetworkPolicy {
+  /** True when tunnel_scope is "all"; kept for older readers. */
   always_on: boolean
+  /** Who the tunnel turns on for: everyone, devices with one of tunnel_tags, or nobody. */
+  tunnel_scope?: TunnelScope
+  tunnel_tags?: string[]
   split_tunnel: boolean
   block_direct_corporate_cidrs: boolean
   updated_at?: string
