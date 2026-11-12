@@ -735,12 +735,22 @@ jobs:
             # Copy the libvpx runtime DLL next to the exe (dynamic triplet).
             cp "$VCPKG_TRIPLET_DIR/bin/"*vpx*.dll dist/ 2>/dev/null || \
               cp "$VCPKG_TRIPLET_DIR/lib/"*vpx*.dll dist/ 2>/dev/null || true
-            # Belt-and-suspenders: if libwinpthread somehow remained dynamically
-            # linked (older MinGW), ship the DLL next to the exe so a clean box
-            # still launches. Static linking above normally makes this a no-op.
-            for d in /mingw64/bin /c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin; do
+            # libvpx-1.dll from vcpkg's x64-mingw-dynamic triplet imports
+            # libwinpthread-1.dll itself, whatever the exe links statically, so
+            # ship it whenever libvpx ships. It used to be copied only from
+            # /mingw64/bin, which this runner does not have: agent 0.6.0
+            # installed without it and failed on a clean PC with 0xC0000135
+            # (service 1920, install 1603). The vcpkg triplet's own copy
+            # comes first, then the MinGW toolchains.
+            for d in "$VCPKG_TRIPLET_DIR/bin" /mingw64/bin /c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin /c/msys64/mingw64/bin; do
               [ -f "$d/libwinpthread-1.dll" ] && cp "$d/libwinpthread-1.dll" dist/ 2>/dev/null && break
             done || true
+            if ls dist/*vpx*.dll >/dev/null 2>&1 && ! [ -f dist/libwinpthread-1.dll ]; then
+              if objdump -p dist/*vpx*.dll 2>/dev/null | grep -qi 'DLL Name: libwinpthread-1.dll'; then
+                echo "::error::libvpx imports libwinpthread-1.dll and no copy was found to bundle"
+                exit 1
+              fi
+            fi
           else
             if [ "$IS_RELEASE" = "true" ] || [ "$ALLOW_PURE_GO" != "true" ]; then
               echo "::error::screenshare (VP8 capture) build failed and a pure-Go fallback is not permitted here — a video-less agent must never be shipped. Fix the CGO/libvpx build. (release=$IS_RELEASE, allow_pure_go=$ALLOW_PURE_GO)"
@@ -912,9 +922,34 @@ jobs:
           $exe = Get-ChildItem $out -Recurse -Filter openidx-agent.exe | Select-Object -First 1
           if (-not $exe) { throw 'the MSI carries no openidx-agent.exe' }
           Get-ChildItem $exe.DirectoryName | ForEach-Object { "  $($_.Name)" }
+          # Every DLL the agent and the DLLs beside it import is either part of
+          # Windows or in the MSI. A runner has MinGW on its PATH and a PC does
+          # not, so "it starts here" alone missed libvpx's libwinpthread-1.dll.
+          $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+            Where-Object FullName -like '*Hostx64\x64*' | Select-Object -First 1
+          $carried = @(Get-ChildItem $exe.DirectoryName -Filter *.dll | ForEach-Object { $_.Name.ToLower() })
+          $missing = @()
+          foreach ($bin in @($exe) + @(Get-ChildItem $exe.DirectoryName -Filter *.dll)) {
+            $imports = if ($dumpbin) { & $dumpbin.FullName /dependents $bin.FullName | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim().ToLower() } } else { @() }
+            foreach ($d in $imports) {
+              if ($d -like 'api-ms-win-*' -or $d -like 'ext-ms-*') { continue }
+              if (Test-Path (Join-Path "$env:SystemRoot\System32" $d)) { continue }
+              if ($carried -contains $d) { continue }
+              $missing += "$($bin.Name) -> $d"
+            }
+          }
+          if (-not $dumpbin) { Write-Host "::warning::dumpbin not found; DLL import closure not checked" }
+          if ($missing) { throw "the MSI does not carry DLLs its binaries import: $($missing -join ', ')" }
           $stdout = Join-Path $env:RUNNER_TEMP 'caps.txt'
-          $run = Start-Process $exe.FullName -ArgumentList 'capabilities' -WorkingDirectory $env:RUNNER_TEMP `
-            -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout
+          # Run with a clean device's PATH. The runner's PATH carries MinGW and
+          # Git's usr/bin, which hold libwinpthread-1.dll; with them this check
+          # passed an MSI that does not start on a real PC.
+          $savedPath = $env:PATH
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          try {
+            $run = Start-Process $exe.FullName -ArgumentList 'capabilities' -WorkingDirectory $env:RUNNER_TEMP `
+              -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout
+          } finally { $env:PATH = $savedPath }
           if ($run.ExitCode -ne 0) {
             throw ("the agent unpacked from the MSI does not start: exit 0x{0:X8} (0xC0000135 = a DLL the MSI does not carry)" -f $run.ExitCode)
           }
