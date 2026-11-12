@@ -10323,6 +10323,48 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /downloads/agent/{channel}/{file}:
+    parameters:
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [stable, beta]
+      - name: file
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Agent Downloads]
+      summary: Agent update mirror
+      description: >-
+        The box's mirror of an agent update channel. latest.json is the
+        mirrored release manifest with its url pointing at this box, re-signed
+        with AGENT_MANIFEST_SIGNING_KEY; any other file is the MSI that
+        manifest names. Public, like /downloads/{file}.
+      operationId: agentUpdateMirror
+      x-openidx-handler: internal/access.(*Service).handleAgentMirror
+      responses:
+        '200':
+          description: The signed manifest, or the installer it names
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: The mirror cannot sign (no signing key or public URL configured)
+
   /temp-access/{token}:
     parameters:
       - name: token
