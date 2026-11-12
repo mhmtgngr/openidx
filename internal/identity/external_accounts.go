@@ -104,6 +104,9 @@ type ExternalUser struct {
 	StatusChangedAt  *time.Time `json:"status_changed_at,omitempty"`
 	LastLoginAt      *time.Time `json:"last_login_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
+	// Source is how the account was made: federated for one provisioned at
+	// an SSO sign-in (B2.2), otherwise local (an invitation).
+	Source string `json:"source"`
 	// ExpiringSoon: active, and the account ends within externalExpiringSoon.
 	ExpiringSoon bool `json:"expiring_soon"`
 	// HasStrongFactor: an authenticator app, passkey or push device is
@@ -416,7 +419,8 @@ func (s *Service) handleChangeExternalSponsor(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"id": userID, "sponsor_user_id": req.SponsorUserID})
 }
 
-// handleListExternalUsers — GET /external-users[?vendor_org_id=&status=].
+// handleListExternalUsers — GET /external-users[?vendor_org_id=&status=&source=].
+// source=federated lists the accounts provisioned at an SSO sign-in.
 func (s *Service) handleListExternalUsers(c *gin.Context) {
 	ctx := c.Request.Context()
 	org, err := orgctx.From(ctx)
@@ -429,6 +433,7 @@ func (s *Service) handleListExternalUsers(c *gin.Context) {
 		       u.account_status, COALESCE(u.enabled, false), u.vendor_org_id::text, COALESCE(v.name, ''),
 		       u.sponsor_user_id::text, COALESCE(NULLIF(trim(COALESCE(sp.first_name, '') || ' ' || COALESCE(sp.last_name, '')), ''), sp.username, ''),
 		       u.account_expires_at, u.status_changed_at, u.last_login_at, u.created_at, COALESCE(v.status, ''),
+		       COALESCE(u.source, 'local'),
 		       EXISTS (SELECT 1 FROM mfa_totp t WHERE t.user_id = u.id AND t.org_id = u.org_id AND t.enabled)
 		    OR EXISTS (SELECT 1 FROM mfa_webauthn w WHERE w.user_id = u.id AND w.org_id = u.org_id)
 		    OR EXISTS (SELECT 1 FROM mfa_push_devices p WHERE p.user_id = u.id AND p.org_id = u.org_id AND COALESCE(p.enabled, true))
@@ -438,8 +443,9 @@ func (s *Service) handleListExternalUsers(c *gin.Context) {
 		 WHERE u.org_id = $1 AND u.user_type = 'external'
 		   AND ($2 = '' OR u.vendor_org_id = NULLIF($2, '')::uuid)
 		   AND ($3 = '' OR u.account_status = $3)
+		   AND ($4 = '' OR COALESCE(u.source, 'local') = $4)
 		 ORDER BY u.account_expires_at NULLS LAST, u.username
-		 LIMIT 500`, org.ID, c.Query("vendor_org_id"), c.Query("status"))
+		 LIMIT 500`, org.ID, c.Query("vendor_org_id"), c.Query("status"), c.Query("source"))
 	if err != nil {
 		s.logger.Error("list external users failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list external users"})
@@ -453,7 +459,7 @@ func (s *Service) handleListExternalUsers(c *gin.Context) {
 		var vendorStatus string
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName, &u.Status, &u.Enabled,
 			&u.VendorOrgID, &u.VendorName, &u.SponsorUserID, &u.SponsorName, &u.AccountExpiresAt,
-			&u.StatusChangedAt, &u.LastLoginAt, &u.CreatedAt, &vendorStatus, &u.HasStrongFactor); err != nil {
+			&u.StatusChangedAt, &u.LastLoginAt, &u.CreatedAt, &vendorStatus, &u.Source, &u.HasStrongFactor); err != nil {
 			s.logger.Error("scan external user failed", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list external users"})
 			return

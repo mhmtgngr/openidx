@@ -121,3 +121,24 @@ func TestFromDBAndCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestExpiryForVendor(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	if got := ExpiryForVendor(now, 30, nil); !got.Equal(now.AddDate(0, 0, 30)) {
+		t.Errorf("30 days: %v", got)
+	}
+	if got := ExpiryForVendor(now, 0, nil); !got.Equal(now.AddDate(0, 0, DefaultAccountDays)) {
+		t.Errorf("default: %v", got)
+	}
+	if got := ExpiryForVendor(now, 9999, nil); !got.Equal(now.AddDate(0, 0, MaxAccountDays)) {
+		t.Errorf("cap: %v", got)
+	}
+	end := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	if got := ExpiryForVendor(now, 90, &end); !got.Equal(time.Date(2026, 1, 10, 23, 59, 59, 0, time.UTC)) {
+		t.Errorf("contract end: %v", got)
+	}
+	past := time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC)
+	if got := ExpiryForVendor(now, 90, &past); ValidateExpiry(now, &got, &past) == nil {
+		t.Errorf("an ended contract must yield a refused expiry, got %v", got)
+	}
+}

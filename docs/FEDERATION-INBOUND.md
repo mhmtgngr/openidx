@@ -125,3 +125,47 @@ on-premises provider on a private address (for example AD FS at
 `OIDCRP_ALLOW_LOOPBACK=1` additionally allows issuers on the loopback
 interface. It exists for tests and single-host development. Leave it unset
 in production.
+
+## Paydaş kurumları (partner organizations)
+
+A partner organization whose people already have accounts at their own
+identity provider (a ministry's Entra tenant, a supplier's AD FS) does not
+need one invitation per person. Its people sign in through that provider
+and are provisioned as external users of the partner's vendor organization
+on their first sign-in.
+
+Set it up in **External users > Vendor organizations**:
+
+1. Register the partner's provider under **Identity providers** as above.
+2. Edit (or create) the vendor organization and set:
+   - **How its people arrive**: `Federated (own IdP)`, or `Invitation and
+     federated` to keep invitations working alongside.
+   - **Identity provider**: the partner's provider. Leave it on "any
+     provider" to match by the vendor's **allowed email domains** instead.
+   - **Default sponsor**: required for a federated vendor. Every external
+     account has a sponsor, and a person provisioned at sign-in has nobody
+     else. **Change default sponsor** on the vendor row changes it later;
+     accounts already provisioned keep their own sponsor.
+   - **Default account lifetime** and **Sliding expiry**: with sliding
+     expiry each successful sign-in moves the account end forward by the
+     lifetime, never past the contract end or 365 days
+     (`external.expiry_slid` in the audit trail).
+   - **Default groups**: only groups open to external users are offered.
+3. On the provider, `jit_policy.population_rules` can separate the
+   partner's guests from your own staff on a shared tenant, for example
+   `[{"claim": "acct", "values": ["1"], "population": "external"}]` with
+   Entra's optional `acct` claim.
+
+A person is matched to a vendor by the vendor's bound provider (and email
+domain), then by allowed email domain, then by the provider's
+`jit_policy.vendor_org_id`. A person who matches none is refused with
+`sso_partner_not_registered`; a suspended vendor's people are refused. A
+provisioned account starts as `pending_mfa` and enrols a strong factor
+before it is used. **External users > Accounts > Source: Signed in through
+their IdP** lists the accounts provisioned this way (`GET
+/api/v1/identity/external-users?source=federated`).
+
+Proxied applications: a route bound to an identity provider (`idp_id`)
+signs in through OpenIDX's `/oauth/authorize?idp_hint=<idp_id>`, so the
+same federation callback, provisioning and MFA rules apply. The access
+proxy no longer talks to the provider itself.

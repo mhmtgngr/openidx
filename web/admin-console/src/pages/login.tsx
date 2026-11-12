@@ -106,6 +106,25 @@ interface AuthResult {
   client_name?: string
   scopes?: string[]
   error_description?: string
+  // Entra external authentication method (/eam/verify): the form the page
+  // posts to Entra's reply address to hand back the second factor.
+  form_post?: { action: string; fields: Record<string, string> }
+}
+
+// submitFormPost hands an EAM answer to Entra the way form_post wants it.
+function submitFormPost(fp: { action: string; fields: Record<string, string> }) {
+  const form = document.createElement('form')
+  form.method = 'POST'
+  form.action = fp.action
+  for (const [name, value] of Object.entries(fp.fields)) {
+    const input = document.createElement('input')
+    input.type = 'hidden'
+    input.name = name
+    input.value = value
+    form.appendChild(input)
+  }
+  document.body.appendChild(form)
+  form.submit()
 }
 
 // POST_LOGIN_PATH_KEY holds where the console goes once a sign-in that this
@@ -166,6 +185,10 @@ export function LoginPage() {
   // the person adds one here (internal/oauth/mfa_enroll_inline.go).
   const [enrollChallenge, setEnrollChallenge] = useState<{ session: string; methods: string[] } | null>(null)
   const [mfaSession, setMfaSession] = useState('')
+  // Set when Entra handed the second factor here (?eam_session=): the MFA
+  // step is the same, and it completes at /eam/verify instead.
+  const eamRef = useRef(false)
+  const mfaVerifyPath = () => (eamRef.current ? '/eam/verify' : '/oauth/mfa-verify')
   const [mfaCode, setMfaCode] = useState('')
   const [mfaMethods, setMfaMethods] = useState<string[]>([])
   const [selectedMfaMethod, setSelectedMfaMethod] = useState<string>('')
@@ -375,7 +398,9 @@ export function LoginPage() {
     // A sign-in through an identity provider whose user needs a second factor
     // comes back with the MFA session the password step would have opened,
     // and the methods it offers; the step goes on from here.
-    const handedMfa = urlParams.get('mfa_session')
+    const handedEam = urlParams.get('eam_session')
+    eamRef.current = !!handedEam
+    const handedMfa = urlParams.get('mfa_session') || handedEam
     if (handedMfa) {
       const methods = knownMfaMethods(urlParams.get('mfa_methods') ?? '')
       setMfaRequired(true)
@@ -481,6 +506,10 @@ export function LoginPage() {
   // and nothing anywhere posted to /oauth/consent. Returns true when the
   // response was handled.
   const finishAuth = useCallback((data: AuthResult): boolean => {
+    if (data.form_post) {
+      submitFormPost(data.form_post)
+      return true
+    }
     if (data.consent_required && data.consent_session) {
       setConsentChallenge({
         consent_session: data.consent_session,
@@ -819,7 +848,7 @@ export function LoginPage() {
       // Step 3: Serialize and send to mfa-verify
       const assertionJSON = serializeAssertionResponse(credential)
 
-      const verifyResponse = await fetch(`${baseURL}/oauth/mfa-verify`, {
+      const verifyResponse = await fetch(`${baseURL}${mfaVerifyPath()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -877,7 +906,7 @@ export function LoginPage() {
             pushPollingRef.current = null
 
             // Step 3: Complete MFA verify with challenge_id
-            const verifyResponse = await fetch(`${baseURL}/oauth/mfa-verify`, {
+            const verifyResponse = await fetch(`${baseURL}${mfaVerifyPath()}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -964,7 +993,7 @@ export function LoginPage() {
     setIsSubmitting(true)
 
     try {
-      const response = await fetch(`${baseURL}/oauth/mfa-verify`, {
+      const response = await fetch(`${baseURL}${mfaVerifyPath()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

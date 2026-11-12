@@ -28,7 +28,38 @@ export interface VendorOrg {
   // I13: the vendor's users reach, launch and ask for a target only inside a
   // running engagement that covers it.
   require_engagement?: boolean
+  // Migration 247: how the vendor's people arrive. invitation: one invitation
+  // each; federated: provisioned at their first sign-in through idp_id; both.
+  onboarding_mode?: 'invitation' | 'federated' | 'both'
+  idp_id?: string
+  // Each federated sign-in moves the account's expiry forward (never past the
+  // contract end or 365 days).
+  sliding_expiry?: boolean
+  // Groups (open to external users) a provisioned person joins.
+  default_group_ids?: string[]
 }
+
+// vendorBody is the full PUT/POST body for a vendor: the update writes every
+// field, so a change of one field sends the rest as they are.
+export const vendorBody = (v: VendorOrg, patch: Record<string, unknown> = {}) => ({
+  name: v.name,
+  status: v.status,
+  contact_name: v.contact_name,
+  contact_email: v.contact_email,
+  contract_start: v.contract_start?.slice(0, 10) ?? '',
+  contract_end: v.contract_end?.slice(0, 10) ?? '',
+  allowed_email_domains: v.allowed_email_domains ?? [],
+  default_expiry_days: v.default_expiry_days,
+  default_sponsor_user_id: v.default_sponsor_user_id,
+  notes: v.notes,
+  closed_list: !!v.closed_list,
+  require_engagement: !!v.require_engagement,
+  onboarding_mode: v.onboarding_mode ?? 'invitation',
+  idp_id: v.idp_id ?? '',
+  sliding_expiry: !!v.sliding_expiry,
+  default_group_ids: v.default_group_ids ?? [],
+  ...patch,
+})
 
 export type ApiError = { response?: { data?: { error?: string } }; message?: string }
 export const apiErrorText = (err: unknown, fallback: string) =>

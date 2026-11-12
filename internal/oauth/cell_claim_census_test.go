@@ -61,6 +61,8 @@ var (
 		"ssf.go#BuildSET#claims": "A Security Event Token: this issuer SENDS it to a receiver's endpoint. It is not " +
 			"presented to us and is never a bearer, and the cell that emitted an event is not something a receiver has " +
 			"any use for.",
+		"eam.go#signEAMIDToken#claims": "An id_token for Microsoft Entra, under its own issuer (<issuer>/eam) and keys; " +
+			"no OpenIDX API is ever handed it, so there is no cell to route it to.",
 		"stepup.go#generateStepUpToken#claims": "A proof token carried ALONGSIDE the bearer, and a free function with no " +
 			"Service receiver -- it has no cellID to stamp. The bearer it accompanies is stamped, and that is what the " +
 			"guard reads: a step-up token in the wrong cell cannot arrive without its bearer arriving too, and the bearer " +

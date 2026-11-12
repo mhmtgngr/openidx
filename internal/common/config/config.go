@@ -309,6 +309,19 @@ type Config struct {
 	// keep public subjects regardless.
 	OIDCPairwiseSubjects bool `mapstructure:"oidc_pairwise_subjects"`
 
+	// EAM*: OpenIDX as a Microsoft Entra ID external authentication method
+	// (internal/oauth/eam.go). Off by default; with EAMEnabled false the /eam
+	// endpoints answer 404. EAMClientID is the application id Entra sends as
+	// client_id and expects as the id_token audience; EAMTenantIDs lists the
+	// Entra tenants (comma-separated GUIDs) whose id_token_hint is accepted.
+	// EAMRequireStrongFactors (default true) limits the second factor to an
+	// authenticator app, a passkey or push, which is what Entra's "possession
+	// or inherence" claim promises.
+	EAMEnabled              bool   `mapstructure:"eam_enabled"`
+	EAMClientID             string `mapstructure:"eam_client_id"`
+	EAMTenantIDs            string `mapstructure:"eam_tenant_ids"`
+	EAMRequireStrongFactors bool   `mapstructure:"eam_require_strong_factors"`
+
 	// DefaultOrgFallback, when true, makes the TenantResolver attach the
 	// install's default org to any request that resolves no tenant signal
 	// (single-tenant compatibility). v1.7.0 ships with this OFF: a request
@@ -1306,6 +1319,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("ssf_receiver_jwks_url", "")
 	v.SetDefault("ziti_per_org_attributes", false)
 	v.SetDefault("oidc_pairwise_subjects", false)
+	v.SetDefault("eam_enabled", false)
+	v.SetDefault("eam_client_id", "")
+	v.SetDefault("eam_tenant_ids", "")
+	v.SetDefault("eam_require_strong_factors", true)
 	// v1.7.0: tenant isolation is enforced by default — no silent default-org
 	// fallback. Single-tenant installs opt back in with DEFAULT_ORG_FALLBACK=true.
 	v.SetDefault("default_org_fallback", false)
@@ -1550,6 +1567,10 @@ func bindEnvVars(v *viper.Viper) {
 		"ssf_receiver_issuer":                 "SSF_RECEIVER_ISSUER",
 		"ssf_receiver_jwks_url":               "SSF_RECEIVER_JWKS_URL",
 		"ziti_per_org_attributes":             "ZITI_PER_ORG_ATTRIBUTES",
+		"eam_enabled":                         "EAM_ENABLED",
+		"eam_client_id":                       "EAM_CLIENT_ID",
+		"eam_tenant_ids":                      "EAM_TENANT_IDS",
+		"eam_require_strong_factors":          "EAM_REQUIRE_STRONG_FACTORS",
 		"default_org_fallback":                "DEFAULT_ORG_FALLBACK",
 		"default_org_id":                      "DEFAULT_ORG_ID",
 		"oauth_jwks_url":                      "OAUTH_JWKS_URL",
@@ -2316,6 +2337,9 @@ func (c *Config) ReportModeGates() []string {
 	}
 	if !strings.EqualFold(strings.TrimSpace(c.ABACEnforce), "enforce") {
 		open = append(open, "ABAC_ENFORCE="+valueOrOff(c.ABACEnforce)+" — attribute policies do not refuse anything")
+	}
+	if c.EAMEnabled && !c.EAMRequireStrongFactors {
+		open = append(open, "EAM_REQUIRE_STRONG_FACTORS=false — Entra is told a second factor was possession or inherence when it may have been an emailed or texted code")
 	}
 	if !strings.EqualFold(strings.TrimSpace(c.StepUpGate), "enforce") {
 		open = append(open, "STEPUP_GATE="+valueOrOff(c.StepUpGate)+" — a PAM launch or an admin write never asks for a fresh second factor")

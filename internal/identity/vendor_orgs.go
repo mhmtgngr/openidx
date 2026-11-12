@@ -50,6 +50,17 @@ type VendorOrganization struct {
 	// launch and ask for a target only inside a running engagement that
 	// covers it (/vendor-orgs/:id/engagements).
 	RequireEngagement bool `json:"require_engagement"`
+	// OnboardingMode (migration 247): invitation, federated or both. A
+	// federated vendor's people are provisioned at their first SSO sign-in.
+	OnboardingMode string `json:"onboarding_mode"`
+	// IdPID is the identity provider the vendor's people sign in through.
+	IdPID string `json:"idp_id"`
+	// SlidingExpiry moves an account's expiry forward on each federated
+	// sign-in, never past the contract end or 365 days.
+	SlidingExpiry bool `json:"sliding_expiry"`
+	// DefaultGroupIDs are the groups a provisioned person joins (only those
+	// open to external users).
+	DefaultGroupIDs []string `json:"default_group_ids"`
 	// ExternalUsers counts the vendor's external users by account status.
 	ExternalUsers map[string]int `json:"external_users"`
 }
@@ -72,6 +83,12 @@ type vendorOrgReq struct {
 	// RequireEngagement, when given, sets I13; left out, an update keeps what
 	// the vendor has and a create starts with it on.
 	RequireEngagement *bool `json:"require_engagement"`
+	// The federation fields (migration 247). Each, when left out, keeps what
+	// the vendor has on an update and takes the column default on a create.
+	OnboardingMode  *string   `json:"onboarding_mode"`
+	IdPID           *string   `json:"idp_id"`
+	SlidingExpiry   *bool     `json:"sliding_expiry"`
+	DefaultGroupIDs *[]string `json:"default_group_ids"`
 }
 
 var errVendorOrgNotFound = errors.New("vendor organization not found")
@@ -126,7 +143,78 @@ func (r *vendorOrgReq) normalize() error {
 		domains = append(domains, d)
 	}
 	r.AllowedEmailDomains = domains
+	if r.OnboardingMode != nil {
+		switch *r.OnboardingMode {
+		case "invitation", "federated", "both":
+		default:
+			return errors.New("onboarding_mode must be invitation, federated or both")
+		}
+		if *r.OnboardingMode != "invitation" && r.DefaultSponsorUserID == "" {
+			return errors.New("a vendor whose people arrive through federation needs a default_sponsor_user_id")
+		}
+	}
 	return nil
+}
+
+// checkVendorFederation validates the identity provider and default groups a
+// vendor names: the provider is one of the organization's, and each group is
+// the organization's and open to external users.
+func (s *Service) checkVendorFederation(ctx context.Context, orgID string, r *vendorOrgReq) error {
+	if r.IdPID != nil && *r.IdPID != "" {
+		var ok bool
+		if err := s.db.Pool.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM identity_providers WHERE id::text = $1 AND org_id = $2)`,
+			*r.IdPID, orgID).Scan(&ok); err != nil {
+			return err
+		}
+		if !ok {
+			return errVendorBadFederation("idp_id is not an identity provider of this organization")
+		}
+	}
+	if r.DefaultGroupIDs != nil && len(*r.DefaultGroupIDs) > 0 {
+		var n int
+		if err := s.db.Pool.QueryRow(ctx,
+			`SELECT count(*) FROM groups WHERE id::text = ANY($1) AND org_id = $2 AND COALESCE(external_allowed, false)`,
+			*r.DefaultGroupIDs, orgID).Scan(&n); err != nil {
+			return err
+		}
+		if n != len(*r.DefaultGroupIDs) {
+			return errVendorBadFederation("default_group_ids must be groups of this organization open to external users")
+		}
+	}
+	return nil
+}
+
+type errVendorBadFederation string
+
+func (e errVendorBadFederation) Error() string { return string(e) }
+
+// writeVendorFederationRefusal answers a checkVendorFederation error.
+func (s *Service) writeVendorFederationRefusal(c *gin.Context, err error) {
+	var bad errVendorBadFederation
+	if errors.As(err, &bad) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": bad.Error()})
+		return
+	}
+	s.logger.Error("check vendor federation failed", zap.Error(err))
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check the vendor's identity provider and groups"})
+}
+
+func optIDP(p *string) interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func optGroups(p *[]string) interface{} {
+	if p == nil {
+		return nil
+	}
+	if *p == nil {
+		return []string{}
+	}
+	return *p
 }
 
 func nullIfEmpty(s string) interface{} {
@@ -142,6 +230,7 @@ const vendorOrgSelect = `
 	       to_char(v.contract_start, 'YYYY-MM-DD'), to_char(v.contract_end, 'YYYY-MM-DD'),
 	       v.allowed_email_domains, v.default_expiry_days, COALESCE(v.default_sponsor_user_id::text, ''),
 	       COALESCE(v.notes, ''), v.created_at, v.updated_at, v.closed_at, v.closed_list, v.require_engagement,
+	       v.onboarding_mode, COALESCE(v.idp_id::text, ''), v.sliding_expiry, COALESCE(v.default_group_ids::text[], '{}'),
 	       COALESCE((SELECT jsonb_object_agg(s.account_status, s.n) FROM (
 	           SELECT u.account_status, count(*) AS n FROM users u
 	            WHERE u.vendor_org_id = v.id AND u.org_id = v.org_id GROUP BY u.account_status) s), '{}'::jsonb)
@@ -151,11 +240,15 @@ func scanVendorOrg(row pgx.Row) (*VendorOrganization, error) {
 	var v VendorOrganization
 	if err := row.Scan(&v.ID, &v.Name, &v.Status, &v.ContactName, &v.ContactEmail,
 		&v.ContractStart, &v.ContractEnd, &v.AllowedEmailDomains, &v.DefaultExpiryDays,
-		&v.DefaultSponsorUserID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ClosedAt, &v.ClosedList, &v.RequireEngagement, &v.ExternalUsers); err != nil {
+		&v.DefaultSponsorUserID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ClosedAt, &v.ClosedList, &v.RequireEngagement,
+		&v.OnboardingMode, &v.IdPID, &v.SlidingExpiry, &v.DefaultGroupIDs, &v.ExternalUsers); err != nil {
 		return nil, err
 	}
 	if v.AllowedEmailDomains == nil {
 		v.AllowedEmailDomains = []string{}
+	}
+	if v.DefaultGroupIDs == nil {
+		v.DefaultGroupIDs = []string{}
 	}
 	return &v, nil
 }
@@ -251,20 +344,25 @@ func (s *Service) handleCreateVendorOrg(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check the default sponsor"})
 		return
 	}
+	if err := s.checkVendorFederation(ctx, org.ID, &req); err != nil {
+		s.writeVendorFederationRefusal(c, err)
+		return
+	}
 	actor := c.GetString("user_id")
 	var id string
 	err = s.db.Pool.QueryRow(ctx, `
 		INSERT INTO vendor_organizations
 		    (org_id, name, status, contact_name, contact_email, contract_start, contract_end,
 		     allowed_email_domains, default_expiry_days, default_sponsor_user_id, notes, created_by, closed_list,
-		     require_engagement)
+		     require_engagement, onboarding_mode, idp_id, sliding_expiry, default_group_ids)
 		VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8, $9, $10::uuid, $11, NULLIF($12, '')::uuid, COALESCE($13::boolean, false),
-		        COALESCE($14::boolean, true))
+		        COALESCE($14::boolean, true), COALESCE($15::text, 'invitation'), NULLIF($16::text, '')::uuid,
+		        COALESCE($17::boolean, false), COALESCE($18::uuid[], '{}'))
 		RETURNING id::text`,
 		org.ID, req.Name, req.Status, nullIfEmpty(req.ContactName), nullIfEmpty(req.ContactEmail),
 		nullIfEmpty(req.ContractStart), nullIfEmpty(req.ContractEnd), req.AllowedEmailDomains,
 		req.DefaultExpiryDays, nullIfEmpty(req.DefaultSponsorUserID), nullIfEmpty(req.Notes), actor, req.ClosedList,
-		req.RequireEngagement).Scan(&id)
+		req.RequireEngagement, req.OnboardingMode, optIDP(req.IdPID), req.SlidingExpiry, optGroups(req.DefaultGroupIDs)).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "a vendor organization with this name already exists"})
@@ -310,6 +408,10 @@ func (s *Service) handleUpdateVendorOrg(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check the default sponsor"})
 		return
 	}
+	if err := s.checkVendorFederation(ctx, org.ID, &req); err != nil {
+		s.writeVendorFederationRefusal(c, err)
+		return
+	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		s.logger.Error("update vendor organization: begin failed", zap.Error(err))
@@ -338,12 +440,22 @@ func (s *Service) handleUpdateVendorOrg(c *gin.Context) {
 		       contract_start = $7::date, contract_end = $8::date, allowed_email_domains = $9,
 		       default_expiry_days = $10, default_sponsor_user_id = $11::uuid, notes = $12,
 		       closed_list = COALESCE($13::boolean, closed_list),
-		       require_engagement = COALESCE($14::boolean, require_engagement), updated_at = NOW()
+		       require_engagement = COALESCE($14::boolean, require_engagement),
+		       onboarding_mode = COALESCE($15::text, onboarding_mode),
+		       idp_id = CASE WHEN $16::text IS NULL THEN idp_id ELSE NULLIF($16::text, '')::uuid END,
+		       sliding_expiry = COALESCE($17::boolean, sliding_expiry),
+		       default_group_ids = COALESCE($18::uuid[], default_group_ids), updated_at = NOW()
 		 WHERE id = $1::uuid AND org_id = $2 AND status <> 'closed'`,
 		id, org.ID, req.Name, req.Status, nullIfEmpty(req.ContactName), nullIfEmpty(req.ContactEmail),
 		nullIfEmpty(req.ContractStart), nullIfEmpty(req.ContractEnd), req.AllowedEmailDomains,
-		req.DefaultExpiryDays, nullIfEmpty(req.DefaultSponsorUserID), nullIfEmpty(req.Notes), req.ClosedList, req.RequireEngagement)
+		req.DefaultExpiryDays, nullIfEmpty(req.DefaultSponsorUserID), nullIfEmpty(req.Notes), req.ClosedList, req.RequireEngagement,
+		req.OnboardingMode, optIDP(req.IdPID), req.SlidingExpiry, optGroups(req.DefaultGroupIDs))
 	if err != nil {
+		if isCheckViolation(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "a vendor whose people arrive through federation needs a default sponsor",
+				"code": "vendor_federated_needs_sponsor"})
+			return
+		}
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "a vendor organization with this name already exists"})
 			return
@@ -425,6 +537,18 @@ func (s *Service) handleUpdateVendorOrg(c *gin.Context) {
 	}
 	if req.RequireEngagement != nil {
 		updated["require_engagement"] = *req.RequireEngagement
+	}
+	if req.OnboardingMode != nil {
+		updated["onboarding_mode"] = *req.OnboardingMode
+	}
+	if req.IdPID != nil {
+		updated["idp_id"] = *req.IdPID
+	}
+	if req.SlidingExpiry != nil {
+		updated["sliding_expiry"] = *req.SlidingExpiry
+	}
+	if req.DefaultGroupIDs != nil {
+		updated["default_group_ids"] = *req.DefaultGroupIDs
 	}
 	s.logAuditEvent(ctx, "identity", "external_access", "vendor_org.updated", "success", actor, id,
 		"vendor_organization", updated)

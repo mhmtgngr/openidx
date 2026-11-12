@@ -230,9 +230,12 @@ func newProxyIssuer(t *testing.T) *proxyIssuer {
 		case "/.well-known/jwks.json":
 			_ = json.NewEncoder(w).Encode(jwks)
 		case "/oauth/token":
-			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": i.unsigned(), "token_type": "Bearer"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": i.unsigned(), "id_token": i.unsigned(), "token_type": "Bearer"})
 		case "/token":
-			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "opaque", "id_token": i.unsigned()})
+			// An external provider's token endpoint. The proxy must never
+			// call it (B1.5): federation runs through OpenIDX.
+			t.Errorf("the proxy called an external identity provider's token endpoint")
+			http.NotFound(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -250,6 +253,14 @@ func (i *proxyIssuer) as(user, email string, roles ...string) {
 		rs = append(rs, r)
 	}
 	i.sub = map[string]interface{}{"sub": user, "email": email, "name": "Someone", "roles": rs}
+}
+
+// via marks the next tokens as from a federated sign-in through idp, as
+// OpenIDX's id_token idp claim does.
+func (i *proxyIssuer) via(idp string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.sub["idp"] = idp
 }
 
 // unsigned is the token the code exchange returns. The proxy reads a token it

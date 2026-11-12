@@ -1749,5 +1749,19 @@ func allMigrations() []*Migration {
 			UpSQL:       federatedIdPProfileUp,
 			DownSQL:     federatedIdPProfileDown,
 		},
+		{
+			Version:     247,
+			Name:        "vendor_federation",
+			Description: "Partner organizations that sign in through their own identity provider. vendor_organizations gains onboarding_mode (invitation by default, federated or both), idp_id (the provider the vendor's people sign in through; indexed, SET NULL when the provider is deleted), sliding_expiry (a federated sign-in moves the account's expiry forward, capped by the contract end and 365 days) and default_group_ids (groups a provisioned person joins, only those open to external users). A CHECK requires a default sponsor for any vendor that is not invitation-only, since a person provisioned at sign-in has no other sponsor (I1). The table keeps its org policy; down drops the columns.",
+			UpSQL:       vendorFederationUp,
+			DownSQL:     vendorFederationDown,
+		},
+		{
+			Version:     248,
+			Name:        "eam_signing_keys",
+			Description: "Signing keys for OpenIDX as a Microsoft Entra ID external authentication method. eam_signing_keys (kid, private_key_enc sealed with the install cipher, self-signed cert_pem for x5c, not_before, not_after, active) is platform level: one Entra app registration reads one /eam/jwks. A rotated key is published before it signs, because Entra caches the set. No org_id and no RLS; openidx_app reads and writes it; down drops it.",
+			UpSQL:       eamSigningKeysUp,
+			DownSQL:     eamSigningKeysDown,
+		},
 	}
 }

@@ -104,19 +104,31 @@ func TestTheProxySignInRedirectsOnlyToItsOwnHosts(t *testing.T) {
 	}
 }
 
-// /access/.auth/login?idp=: the external identity provider's flow stores the
-// target, and its callback, on the access service's own host, follows it.
+// /access/.auth/login?idp=: the sign-in goes to OpenIDX's /oauth/authorize
+// with idp_hint (never to the provider itself), stores the target, and its
+// callback follows it and records the provider from the id_token.
 func TestTheProxySignInThroughAnIdentityProviderRedirectsOnlyToItsOwnHosts(t *testing.T) {
 	p := newProxyFlow(t)
 	host, cases := p.redirectCases(t)
 	idp := p.seedIDP(t, p.f.orgA)
 	p.issuer.as(p.f.userA, "user-a@example.test")
+	p.issuer.via(idp)
+
+	r := p.get(t, host, "/access/.auth/login?idp="+url.QueryEscape(idp), "", nil)
+	u, err := url.Parse(r.location)
+	if r.status != http.StatusFound || err != nil || u.Path != "/oauth/authorize" || u.Query().Get("idp_hint") != idp ||
+		!strings.HasPrefix(r.location, p.issuer.srv.URL) {
+		t.Fatalf("login with idp went to %d %q, want OpenIDX /oauth/authorize with idp_hint", r.status, r.location)
+	}
+	if r := p.get(t, host, "/access/.auth/login?idp=00000000-0000-0000-0000-000000000000", "", nil); r.status != http.StatusBadRequest {
+		t.Errorf("login with an unknown idp: %d, want 400", r.status)
+	}
 
 	run := func(target string) (stored, location string) {
 		t.Helper()
 		state := p.startSignIn(t, host, url.Values{"idp": {idp}, "redirect_url": {target}})
 		stored = p.storedRedirect(t, state)
-		return stored, p.finishSignIn(t, p.ownHost, state).location
+		return stored, p.finishSignIn(t, host, state).location
 	}
 	for _, target := range cases.refused {
 		if stored, location := run(target); stored != "/" || location != "/" {
@@ -127,6 +139,10 @@ func TestTheProxySignInThroughAnIdentityProviderRedirectsOnlyToItsOwnHosts(t *te
 		if _, location := run(target); location != target {
 			t.Errorf("redirect_url %q through the identity provider: followed to %q, want the target", target, location)
 		}
+	}
+	var n int
+	if err := p.f.db.Pool.QueryRow(p.f.ctx, `SELECT count(*) FROM proxy_sessions WHERE idp_id=$1::uuid`, idp).Scan(&n); err != nil || n == 0 {
+		t.Errorf("no proxy session records the identity provider from the id_token idp claim (n=%d, err=%v)", n, err)
 	}
 }
 
@@ -187,9 +203,11 @@ func TestTheProxyCallbackChecksTheStoredTargetItFollows(t *testing.T) {
 	if r := p.finishSignIn(t, host, "planted-openidx"); r.location != "/" {
 		t.Errorf("the callback followed a stored target to %q, want /", r.location)
 	}
+	// A state written before B1.5 names the provider; it is ignored and the
+	// code still goes to OpenIDX.
 	plant("planted-idp", map[string]string{"verifier": "v", "redirect_url": "//evil.example/landing",
 		"idp_id": idp, "idp_issuer": p.issuer.srv.URL})
-	if r := p.finishSignIn(t, p.ownHost, "planted-idp"); r.location != "/" {
+	if r := p.finishSignIn(t, host, "planted-idp"); r.location != "/" {
 		t.Errorf("the identity provider's callback followed a stored target to %q, want /", r.location)
 	}
 }

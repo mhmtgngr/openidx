@@ -194,7 +194,11 @@ routes:
         read: 10
 
   # OAuth/OIDC service - authorization and token endpoints
-  - uri: /oauth/*
+  # /eam/* is the Entra external authentication method (eam.go); same
+  # service, same issue-plane limits.
+  - uris:
+      - /oauth/*
+      - /eam/*
     name: oauth-service
     plugins:
       limit-req:
