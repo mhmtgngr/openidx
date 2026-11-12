@@ -25,7 +25,8 @@ type ipcResponse struct {
 	Code    int    `json:"Code"`
 	Error   string `json:"Error"`
 	Data    *struct {
-		Active         bool `json:"Active"`
+		Active         bool   `json:"Active"`
+		TunIpv4        string `json:"TunIpv4"`
 		ServiceVersion *struct {
 			Version string `json:"Version"`
 		} `json:"ServiceVersion"`
@@ -131,8 +132,14 @@ func parseIPCStatus(out []byte) (ipcReading, error) {
 		}
 	}
 	sort.Strings(r.Services)
+	// The top-level Active is not a health signal on ziti-edge-tunnel 1.18.x:
+	// a running tunnel with a loaded, active identity and its TUN interface up
+	// reports Active=false (the box's own PAM tunneler does too). The agent
+	// read it as "down" and every Windows tray said Network: Error. It counts
+	// only when the tunneler has no TUN address, i.e. it never came up.
+	inactive := !resp.Data.Active && resp.Data.TunIpv4 == ""
 	switch {
-	case !resp.Data.Active:
+	case inactive:
 		r.Detail = "the tunneler reports itself inactive"
 	case len(resp.Data.Identities) == 0:
 		r.Detail = "the tunneler has loaded no identity"

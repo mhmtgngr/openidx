@@ -18,6 +18,11 @@ func TestParseIPCStatus(t *testing.T) {
 		{name: "healthy", out: healthyStatus, state: StateConnected},
 		{name: "inactive tunnel", state: StateDegraded, detail: "inactive",
 			out: `{"Success":true,"Data":{"Active":false,"Identities":[{"Name":"d","Active":true,"Loaded":true}]}}`},
+		// ziti-edge-tunnel 1.18.7 as it runs on a healthy device: Active=false
+		// at the top, TUN up, identity active. Seen on wintest, where the tray
+		// said Network: Error for a working tunnel.
+		{name: "1.18.7 healthy reports Active=false", state: StateConnected,
+			out: `{"Success":true,"Data":{"Active":false,"TunIpv4":"100.64.0.1","Identities":[{"Name":"d","Active":true,"Loaded":true}]}}`},
 		{name: "no identities", state: StateDegraded, detail: "no identity",
 			out: `{"Success":true,"Data":{"Active":true,"Identities":[]}}`},
 		{name: "identity not loaded", state: StateDegraded, detail: "not loaded",
