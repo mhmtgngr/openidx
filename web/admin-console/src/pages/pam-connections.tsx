@@ -32,6 +32,8 @@ import { connectionPathSteps, ztnaRefusal } from '../lib/connection-path'
 import { remoteAppArgsLookSecret, remoteAppSecretHint } from '../lib/remote-app'
 import { openPamSessionWindow } from '../lib/pam-session-handoff'
 import { ModerationWaitDialog } from '../components/moderation-wait-dialog'
+import { useSessionNotice } from '../hooks/use-session-notice'
+import { statusLines, refusalMessage, PAM_GUIDE_URL } from '../lib/pam-clarity'
 import { apiErrorBody } from '../lib/api-error'
 import { parseFingerprints } from '../lib/pam-cert'
 
@@ -297,9 +299,11 @@ export function PamConnectionsPage() {
           variant: 'destructive',
         })
       } else {
+        const status = (e as { response?: { status?: number } }).response?.status
+        const msg = refusalMessage(status, body)
         toast({
           title: t('pages.pamConnections.toasts.launchFailed'),
-          description: typeof body?.error === 'string' ? body.error : e.message,
+          description: `${typeof body?.error === 'string' ? body.error : e.message} ${t(msg.key, msg.values)}`,
           variant: 'destructive',
         })
       }
@@ -310,13 +314,14 @@ export function PamConnectionsPage() {
   // terminal dialog (no guac tab); everything else uses the existing connect
   // flow (guacamole tab / website URL). The permission + approval gate is
   // enforced server-side for both paths.
-  const launch = (entry: PamEntry) => {
+  const { guard: guardNotice, notice: sessionNotice } = useSessionNotice()
+  const launch = (entry: PamEntry) => guardNotice(entry, () => {
     if (entry.renderer === 'wasm-ssh') {
       setTerminalEntry(entry)
       return
     }
     connect.mutate({ id: entry.id, name: entry.name })
-  }
+  })
 
   const del = useMutation({
     mutationFn: (id: string) => api.pam.deleteEntry(id),
@@ -531,8 +536,10 @@ export function PamConnectionsPage() {
                         <div className="flex items-center gap-2">
                           <span className="font-medium truncate">{entry.name}</span>
                           <Badge className={kindBadge[entry.kind] || ''}>{entry.entry_type}</Badge>
-                          {entry.require_approval && <Badge variant="outline" title={t('pages.pamConnections.badges.requiresApproval')}><Lock className="h-3 w-3" /></Badge>}
-                          {entry.record_session && <Badge variant="outline">{t('pages.pamConnections.badges.recording')}</Badge>}
+                          {entry.require_approval && <Lock className="h-3 w-3 text-muted-foreground" aria-label={t('pages.pamConnections.badges.requiresApproval')} />}
+                          {statusLines(entry).map((l) => (
+                            <Badge key={l.id} variant="outline" title={t(l.key)} data-testid={`pam-rule-${l.id}`}>{t(l.chipKey)}</Badge>
+                          ))}
                           {entry.rdp_cert_mode === 'ignore' && (
                             <Badge
                               variant="outline"
@@ -1156,6 +1163,8 @@ export function PamConnectionsPage() {
           {revealedValue === null ? (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">{t('pages.pamConnections.revealDialog.audited')}</p>
+              <p className="text-sm text-muted-foreground" data-testid="pam-reveal-audit">{t('pamClarity.revealAudit', { seconds: 30 })}</p>
+              <a href={PAM_GUIDE_URL} target="_blank" rel="noreferrer" className="text-sm text-primary hover:underline">{t('pamClarity.howItWorks')}</a>
               <Textarea value={revealReason} onChange={(e) => setRevealReason(e.target.value)} placeholder={t('pages.pamConnections.revealDialog.reasonPlaceholder')} rows={2} />
               <DialogFooter>
                 <Button variant="outline" onClick={() => { clearRevealed(); setRevealFor(null) }}>
@@ -1231,6 +1240,7 @@ export function PamConnectionsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {sessionNotice}
       <ModerationWaitDialog
         entry={waitingFor}
         onClose={() => setWaitingFor(null)}

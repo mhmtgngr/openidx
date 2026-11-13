@@ -161,6 +161,7 @@ export const navigation: NavDomainGroup[] = [
               { name: 'Access Requests', nameKey: 'nav.items.accessRequests', href: '/access-requests', icon: GitPullRequest, minRole: 'user', keywords: ['request access', 'approvals'] },
             ],
           },
+          { name: 'My Privileged Access', nameKey: 'nav.items.myPrivileged', href: '/my-privileged', icon: KeyRound, minRole: 'user', keywords: ['pam', 'privileged', 'rdp', 'ssh', 'remote session', 'credential checkout', 'recorded'] },
           { name: 'My Access', nameKey: 'nav.items.myAccess', href: '/my-access', icon: Eye, minRole: 'user', keywords: ['entitlements', 'permissions'] },
           { name: 'My Devices', nameKey: 'nav.items.myDevices', href: '/my-devices', icon: Smartphone, minRole: 'user', keywords: ['phone', 'enrollment'],
             children: [

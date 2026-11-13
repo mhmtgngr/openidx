@@ -355,7 +355,7 @@ export function MyNetworkPage() {
 
       {/* Privileged access — brokered sessions + credential checkouts. Last
           because it's the most advanced; self-hides when the user has none. */}
-      <MyPrivilegedAccessSection search={search} />
+      <MyPrivilegedAccessSection search={search} limit={3} />
     </div>
   )
 }

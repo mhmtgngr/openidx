@@ -190,4 +190,21 @@ describe('MyNetworkPage', () => {
     expect(await screen.findByText('Connect over the network')).toBeInTheDocument()
     expect(await screen.findByText('wiki.example.org:443')).toBeInTheDocument()
   })
+
+  it('keeps a compact privileged summary with a View all link to /my-privileged', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.includes('my-connections')) {
+        return Promise.resolve({ connections: [1, 2, 3, 4].map((n) => ({
+          route_id: `p${n}`, name: `pam-${n}`, protocol: 'ssh', hostname: `h${n}`, port: 22,
+          require_approval: false, record_session: false, credential_injected: false,
+        })) })
+      }
+      if (url.includes('my/resources')) return Promise.resolve({ resources, summary: { total: 4, ready: 2 } })
+      return Promise.resolve({ requests: [], services: [] })
+    })
+    render(<MyNetworkPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('pam-3')).toBeInTheDocument()
+    expect(screen.queryByText('pam-4')).toBeNull()
+    expect(screen.getByTestId('my-privileged-view-all')).toHaveAttribute('href', '/my-privileged')
+  })
 })
