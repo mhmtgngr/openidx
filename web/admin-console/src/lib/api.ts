@@ -799,6 +799,9 @@ export interface PamEntry {
   require_moderator?: boolean
   record_session: boolean
   reach_mode: string
+  dual_control_required?: boolean
+  exclusive_checkout?: boolean
+  break_glass_enabled?: boolean
   renderer?: string
   ziti_enabled: boolean
   favorite: boolean

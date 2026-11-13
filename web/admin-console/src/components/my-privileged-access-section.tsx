@@ -15,6 +15,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from './ui/alert-dialog'
 import { QueryError } from './query-error'
+import { useSessionNotice } from '../hooks/use-session-notice'
+import { statusLines, refusalMessage, PAM_GUIDE_URL } from '../lib/pam-clarity'
+import { apiErrorBody } from '../lib/api-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -75,7 +78,17 @@ const formatDate = (d: string, locale: string) =>
  * search box (it filters the tables here too); the section hides itself when the
  * user has no connections, requests, or checkouts at all.
  */
-export function MyPrivilegedAccessSection({ search }: { search: string }) {
+export function MyPrivilegedAccessSection({
+  search,
+  limit,
+  showEmpty = false,
+}: {
+  search: string
+  /** Compact mode: show at most this many connections and a View all link. */
+  limit?: number
+  /** Full page: explain what appears here instead of hiding when empty. */
+  showEmpty?: boolean
+}) {
   // This section is reached from the end-user My Network page and its body is
   // still hardcoded English -- the i18n sweep covered src/pages, not the
   // components a page composes. The accessible name below goes through the
@@ -84,6 +97,21 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState('sessions')
+  const { guard, notice } = useSessionNotice()
+  const refusalToast = (err: unknown, fallback: string) => {
+    const status = (err as { response?: { status?: number } }).response?.status
+    const body = apiErrorBody(err)
+    const msg = refusalMessage(status, body)
+    toast({
+      title: (body?.error as string) || fallback,
+      description: t(msg.key, msg.values),
+      variant: 'destructive',
+    })
+  }
+  const startConnect = (conn: { route_id: string; name: string; record_session?: boolean }) =>
+    guard({ id: conn.route_id, name: conn.name, record_session: conn.record_session }, () =>
+      connectMutation.mutate(conn.route_id),
+    )
 
   // Request-approval dialog state
   const [requestOpen, setRequestOpen] = useState(false)
@@ -117,9 +145,10 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
 
   // The shared search box filters the visible rows in each table.
   const term = search.trim().toLowerCase()
-  const fConnections = connections.filter(
+  const fConnectionsAll = connections.filter(
     (c) => !term || c.name.toLowerCase().includes(term) || c.hostname.toLowerCase().includes(term),
   )
+  const fConnections = limit ? fConnectionsAll.slice(0, limit) : fConnectionsAll
   const fSessionRequests = sessionRequests.filter(
     (r) => !term || r.route_name.toLowerCase().includes(term),
   )
@@ -148,17 +177,13 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
       queryClient.invalidateQueries({ queryKey: ['my-guac-session-requests'] })
       window.open(data.connect_url, '_blank')
     },
-    onError: (err: { response?: { data?: { error?: string } } }) => {
-      toast({ title: err.response?.data?.error || 'Failed to start session', variant: 'destructive' })
-    },
+    onError: (err: unknown) => refusalToast(err, t('pamClarity.connectFailed')),
   })
 
   const retrieveMutation = useMutation({
     mutationFn: (id: string) => api.post<{ value: string }>(`/api/v1/governance/requests/${id}/credential`),
     onSuccess: (data) => setRetrievedValue(data.value),
-    onError: (err: { response?: { data?: { error?: string } } }) => {
-      toast({ title: err.response?.data?.error || 'Failed to retrieve credential', variant: 'destructive' })
-    },
+    onError: (err: unknown) => refusalToast(err, t('pamClarity.revealFailed')),
   })
 
   const returnMutation = useMutation({
@@ -193,7 +218,22 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
   const anyError = connsIsError || sessionReqsIsError || checkoutsIsError
   const hasAny = connections.length > 0 || sessionRequests.length > 0 || credentialCheckouts.length > 0
   if (!anyLoading && !anyError && !hasAny) {
-    return null
+    if (!showEmpty) return null
+    return (
+      <Card data-testid="my-privileged-empty">
+        <CardHeader>
+          <CardTitle>{t('pamClarity.empty.title')}</CardTitle>
+          <CardDescription>{t('pamClarity.empty.body')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <p>{t('pamClarity.empty.next')}</p>
+          <div className="flex gap-4">
+            <Link to="/access-requests" className="text-primary hover:underline">{t('pamClarity.empty.request')}</Link>
+            <a href={PAM_GUIDE_URL} target="_blank" rel="noreferrer" className="text-primary hover:underline">{t('pamClarity.howItWorks')}</a>
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
@@ -201,9 +241,18 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
       <div>
         <h2 className="text-xl font-semibold tracking-tight">Privileged access</h2>
         <p className="text-sm text-muted-foreground">
-          Launch brokered remote sessions and manage your time-boxed credential checkouts.
+          Launch brokered remote sessions and manage your time-boxed credential checkouts.{' '}
+          <a href={PAM_GUIDE_URL} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            {t('pamClarity.howItWorks')}
+          </a>
         </p>
+        {limit !== undefined && (
+          <Link to="/my-privileged" className="text-sm text-primary hover:underline" data-testid="my-privileged-view-all">
+            {t('pamClarity.viewAll', { count: fConnectionsAll.length })}
+          </Link>
+        )}
       </div>
+      {notice}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
@@ -261,10 +310,14 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
-                            {conn.require_approval && <Badge variant="secondary">Approval required</Badge>}
-                            {conn.record_session && <Badge variant="secondary">Recorded</Badge>}
+                            {statusLines(conn).map((l) => (
+                              <Badge key={l.id} variant="secondary" title={t(l.key)}>{t(l.chipKey)}</Badge>
+                            ))}
                             {conn.credential_injected && <Badge variant="secondary">Credential injected</Badge>}
                           </div>
+                          {!limit && statusLines(conn).map((l) => (
+                            <p key={l.id} className="text-xs text-muted-foreground mt-1">{t(l.key)}</p>
+                          ))}
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
@@ -277,7 +330,7 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
                               <Button
                                 size="sm"
                                 disabled={connectMutation.isPending}
-                                onClick={() => connectMutation.mutate(conn.route_id)}
+                                onClick={() => startConnect(conn)}
                               >
                                 <Play className="h-3 w-3 mr-1" />
                                 Launch
@@ -345,7 +398,10 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
                               <Button
                                 size="sm"
                                 disabled={connectMutation.isPending}
-                                onClick={() => connectMutation.mutate(r.route_id)}
+                                onClick={() => {
+                                  const c = connections.find((x) => x.route_id === r.route_id)
+                                  startConnect(c ?? { route_id: r.route_id, name: r.route_name })
+                                }}
                               >
                                 <Play className="h-3 w-3 mr-1" />
                                 Launch
@@ -523,7 +579,7 @@ export function MyPrivilegedAccessSection({ search }: { search: string }) {
             {!retrievedValue ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  The credential will be shown once. This action is audited.
+                  {t('pamClarity.revealAuditOnce')}
                 </p>
                 <Button
                   onClick={() => selectedRetrieveId && retrieveMutation.mutate(selectedRetrieveId)}

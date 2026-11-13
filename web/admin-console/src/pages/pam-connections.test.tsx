@@ -3,6 +3,12 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
+// The pre-connect notice has its own tests (my-privileged, pam-clarity); here
+// launches go straight through so the launch flow stays under test.
+vi.mock('../hooks/use-session-notice', () => ({
+  useSessionNotice: () => ({ guard: (_e: unknown, run: () => void) => run(), notice: null }),
+}))
+
 vi.mock('../lib/api', () => ({
   api: {
     pam: {
@@ -464,5 +470,13 @@ describe('ztnaRefusal', () => {
     expect(ztnaRefusal({ ...base, ziti_enabled: true }, 'enforce')).toBeNull()
     const website = { ...base, kind: 'website', ziti_enabled: true } as unknown as PamEntry
     expect(ztnaRefusal(website, 'enforce')).toContain('brokers no session')
+  })
+
+  it('shows rule chips per entry and says what a reveal audits', async () => {
+    renderPage()
+    await screen.findByText('DC01')
+    expect(screen.getAllByTestId('pam-rule-recorded').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getAllByTitle('Reveal secret')[0])
+    expect(await screen.findByTestId('pam-reveal-audit')).toHaveTextContent(/reason you give and the time.*30 seconds/)
   })
 })

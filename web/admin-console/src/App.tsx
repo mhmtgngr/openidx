@@ -104,6 +104,7 @@ import {
   MyDevices,
   AddDevice,
   MyNetwork,
+  MyPrivileged,
   TrustedBrowsers,
   DeviceAuthorization,
   AccessRequests,
@@ -268,10 +269,11 @@ function App() {
         <Route path="quick-links-admin" element={<AdminRoute><QuickLinksAdmin /></AdminRoute>} />
         <Route path="my-access" element={<MyAccess />} />
         {/* My Privileged Access folded into My Apps & Network. Redirect old bookmarks. */}
-        <Route path="my-privileged-access" element={<Navigate to="/my-network" replace />} />
+        <Route path="my-privileged-access" element={<Navigate to="/my-privileged" replace />} />
         <Route path="my-devices" element={<MyDevices />} />
         <Route path="add-device" element={<AddDevice />} />
         <Route path="my-network" element={<MyNetwork />} />
+        <Route path="my-privileged" element={<MyPrivileged />} />
         <Route path="my-security" element={<MySecurity />} />
         <Route path="trusted-browsers" element={<TrustedBrowsers />} />
         {/* RFC 8628 verification page. The path must stay "/device": it is what
