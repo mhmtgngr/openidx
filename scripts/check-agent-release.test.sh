@@ -63,6 +63,10 @@ sed -i 's/(-d "DefaultManifestURL=$AGENT_STAMP_MANIFEST")/()/' "$(WF)"
 expect red "the MSI does not default to the channel"
 
 stage
+sed -i 's#dist/Install-OpenIDXAgent.ps1 \\$#dist/Install-OpenIDXAgent.ps1#' "$(WF)"
+expect red "the channel upload drops a line continuation"
+
+stage
 sed -i 's/AGENT_STAMP_MANIFEST: ${{ vars.AGENT_CHANNEL_MANIFEST || /AGENT_STAMP_MANIFEST: ${{ /' "$(WF)"
 expect red "the stamp ignores the box mirror variable"
 

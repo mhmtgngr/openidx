@@ -97,6 +97,17 @@ grep -qE '^ +AGENT_CHANNEL: agent-latest$' <<<"$body" ||
   finding "the workflow names no agent-latest release channel"
 grep -qF 'gh release upload "$AGENT_CHANNEL" --clobber' <<<"$body" ||
   finding "a release does not replace the agent-latest channel's assets, so agents polling it never see it"
+# Every line of that upload but its last ends in a backslash. One missing ran
+# the next file name as a command (agent-v0.6.0-beta.2: "Uninstall-OpenIDXAgent.ps1:
+# syntax error") after the versioned release was out but before the channel moved.
+# A dist/ line without a trailing backslash followed by another dist/ line is
+# exactly that break.
+if awk '/gh release upload "\$AGENT_CHANNEL" --clobber/{f=1;next}
+        f && /^[[:space:]]+dist\//{ if (prev_open) bad=1; prev_open = ($0 !~ /\\[[:space:]]*$/); next }
+        f{exit}
+        END{exit bad?0:1}' <<<"$body"; then
+  finding "the agent channel upload breaks its line continuation: a file is run as a command"
+fi
 
 # d. Release builds know their channel. They are stamped with
 # AGENT_STAMP_MANIFEST: the box mirror when the repo variable
