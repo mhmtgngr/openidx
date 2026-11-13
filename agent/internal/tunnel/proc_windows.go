@@ -21,7 +21,10 @@ func hideWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 }
 
-func configureChild(cmd *exec.Cmd) { hideWindow(cmd) }
+func configureChild(cmd *exec.Cmd) {
+	hideWindow(cmd)
+	cmd.Env = tunnelerEnv(os.Environ(), os.Getenv("SystemRoot"))
+}
 
 // defaultPrivileged is true: the agent service runs as LocalSystem, which is
 // what the tunneler needs to create its Wintun adapter.
