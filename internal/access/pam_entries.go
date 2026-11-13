@@ -204,24 +204,27 @@ type PamFolder struct {
 // carries no secret material — HasSecret/CredentialEntryID say where the
 // secret lives, never what it is.
 type PamEntry struct {
-	ID                  string                 `json:"id"`
-	FolderID            string                 `json:"folder_id,omitempty"`
-	Name                string                 `json:"name"`
-	EntryType           string                 `json:"entry_type"`
-	Kind                string                 `json:"kind"`
-	Description         string                 `json:"description,omitempty"`
-	Tags                []string               `json:"tags"`
-	Hostname            string                 `json:"hostname,omitempty"`
-	Port                int                    `json:"port,omitempty"`
-	Username            string                 `json:"username,omitempty"`
-	Domain              string                 `json:"domain,omitempty"`
-	URL                 string                 `json:"url,omitempty"`
-	Settings            map[string]interface{} `json:"settings"`
-	HasSecret           bool                   `json:"has_secret"`
-	CredentialEntryID   string                 `json:"credential_entry_id,omitempty"`
-	CredentialEntryName string                 `json:"credential_entry_name,omitempty"`
-	AllowReveal         bool                   `json:"allow_reveal"`
-	RequireApproval     bool                   `json:"require_approval"`
+	ID          string                 `json:"id"`
+	FolderID    string                 `json:"folder_id,omitempty"`
+	Name        string                 `json:"name"`
+	EntryType   string                 `json:"entry_type"`
+	Kind        string                 `json:"kind"`
+	Description string                 `json:"description,omitempty"`
+	Tags        []string               `json:"tags"`
+	Hostname    string                 `json:"hostname,omitempty"`
+	Port        int                    `json:"port,omitempty"`
+	Username    string                 `json:"username,omitempty"`
+	Domain      string                 `json:"domain,omitempty"`
+	URL         string                 `json:"url,omitempty"`
+	Settings    map[string]interface{} `json:"settings"`
+	HasSecret   bool                   `json:"has_secret"`
+	// VaultSecretID names the vault secret injected into sessions (no material),
+	// so the console can show and enable its rotation policy.
+	VaultSecretID       string `json:"vault_secret_id,omitempty"`
+	CredentialEntryID   string `json:"credential_entry_id,omitempty"`
+	CredentialEntryName string `json:"credential_entry_name,omitempty"`
+	AllowReveal         bool   `json:"allow_reveal"`
+	RequireApproval     bool   `json:"require_approval"`
 	// RequireModerator: a session on the entry waits until a moderator
 	// joins to watch it (moderated_sessions.go).
 	RequireModerator    bool   `json:"require_moderator"`
@@ -664,7 +667,8 @@ const pamEntrySelectColumns = `
 	e.dual_control_required, e.exclusive_checkout, e.break_glass_enabled,
 	e.last_connected_at, e.connect_count, e.created_at, e.updated_at,
 	e.require_moderator,
-	e.rdp_cert_mode, e.rdp_cert_fingerprints, e.allow_copy, e.allow_paste, e.allow_file_transfer`
+	e.rdp_cert_mode, e.rdp_cert_fingerprints, e.allow_copy, e.allow_paste, e.allow_file_transfer,
+	COALESCE(e.vault_secret_id::text,'')`
 
 type pamEntryScanner interface {
 	Scan(dest ...any) error
@@ -683,7 +687,7 @@ func scanPamEntry(row pamEntryScanner) (*PamEntry, error) {
 		&e.DualControlRequired, &e.ExclusiveCheckout, &e.BreakGlassEnabled,
 		&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
 		&e.RequireModerator,
-		&e.RDPCertMode, &e.RDPCertFingerprints, &e.AllowCopy, &e.AllowPaste, &e.AllowFileTransfer,
+		&e.RDPCertMode, &e.RDPCertFingerprints, &e.AllowCopy, &e.AllowPaste, &e.AllowFileTransfer, &e.VaultSecretID,
 	); err != nil {
 		return nil, err
 	}
@@ -803,7 +807,7 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 			&e.DualControlRequired, &e.ExclusiveCheckout, &e.BreakGlassEnabled,
 			&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
 			&e.RequireModerator,
-			&e.RDPCertMode, &e.RDPCertFingerprints, &e.AllowCopy, &e.AllowPaste, &e.AllowFileTransfer,
+			&e.RDPCertMode, &e.RDPCertFingerprints, &e.AllowCopy, &e.AllowPaste, &e.AllowFileTransfer, &e.VaultSecretID,
 			&e.Favorite,
 		); err != nil {
 			s.logger.Warn("handlePamListEntries: scan failed", zap.Error(err))

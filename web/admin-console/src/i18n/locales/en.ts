@@ -4532,6 +4532,8 @@ const en = {
         checkoutUse: 'Use',
         noCheckouts: 'No checkouts yet',
         noRotations: 'No rotations yet',
+        noPolicy: 'No rotation policy for this secret.',
+        enableRotation: 'Enable rotation',
       },
       revealDialog: {
         title: 'Reveal Secret Value',
@@ -4683,6 +4685,13 @@ const en = {
       },
     },
     pamConnections: {
+      rotation: {
+        every: 'Rotated every {{hours}} h',
+        lastOk: 'last OK {{time}}',
+        failed: 'Rotation FAILED',
+        notRotated: 'Not rotated',
+        manual: 'Rotation: manual',
+      },
       resourceName: 'connections',
       subtitle:
         'Devolutions RDM-style connection manager — launch RDP/SSH/VNC sessions with the credential injected server-side. You never see the password.',
@@ -4720,6 +4729,7 @@ const en = {
         zitiEnable: 'Enable Ziti reach (zero-trust overlay to target)',
         zitiDisable: 'Disable Ziti reach (revert to direct)',
         zitiDisableEnforced: 'Ziti reach stays on: PAM_REQUIRE_ZTNA=enforce refuses direct reach. Delete the entry to retire it.',
+        enableRotation: 'Enable rotation',
         launchPath: 'Launch path',
         edit: 'Edit',
         delete: 'Delete',

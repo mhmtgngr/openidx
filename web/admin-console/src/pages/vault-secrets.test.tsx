@@ -88,11 +88,12 @@ describe('VaultSecretsPage', () => {
     vi.mocked(api.vault.listCheckouts).mockResolvedValue({ checkouts: [] })
     vi.mocked(api.vault.createSecret).mockResolvedValue(secretA)
     vi.mocked(api.vault.reveal).mockResolvedValue({ value: 'supersecret123' })
+    vi.mocked(api.vault.listPolicies).mockResolvedValue({ policies: [] })
     vi.mocked(api.vault.rotateNow).mockResolvedValue({ status: 'completed' })
     vi.mocked(api.vault.listRotations).mockResolvedValue({ rotations: [
       {
         id: 'run-1',
-        status: 'success',
+        status: 'succeeded',
         trigger: 'manual',
         connector_type: 'generate_only',
         version_from: 2,
@@ -282,8 +283,36 @@ describe('VaultSecretsPage', () => {
     await user.click(screen.getByRole('tab', { name: /rotations/i }))
 
     // The rotation run should be visible
-    expect(await screen.findByText('success')).toBeInTheDocument()
+    expect(await screen.findByText('succeeded')).toBeInTheDocument()
     expect(screen.getByText('manual')).toBeInTheDocument()
     expect(screen.getByText('generate_only')).toBeInTheDocument()
+  })
+
+  it('offers Enable rotation for a secret with no policy, prefilled with that secret', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.vault.createPolicy).mockResolvedValue({} as never)
+    render(<VaultSecretsPage />, { wrapper: createWrapper() })
+    await user.click(await screen.findByText('prod-db-password'))
+    await screen.findByText('Versions (3)')
+    await user.click(screen.getByRole('tab', { name: /rotations/i }))
+    expect(api.vault.listPolicies).toHaveBeenCalledWith('sec-1')
+    await user.click(await screen.findByTestId('enable-rotation'))
+    await user.click(await screen.findByRole('button', { name: 'Create Policy' }))
+    await waitFor(() => expect(api.vault.createPolicy).toHaveBeenCalled())
+    expect(vi.mocked(api.vault.createPolicy).mock.calls[0][0]).toMatchObject({
+      secret_id: 'sec-1',
+      connector_type: 'generate_only',
+    })
+  })
+
+  it('hides Enable rotation when the secret already has a policy', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.vault.listPolicies).mockResolvedValue({ policies: [{ id: 'p1', secret_id: 'sec-1' } as never] })
+    render(<VaultSecretsPage />, { wrapper: createWrapper() })
+    await user.click(await screen.findByText('prod-db-password'))
+    await screen.findByText('Versions (3)')
+    await user.click(screen.getByRole('tab', { name: /rotations/i }))
+    await screen.findByText('succeeded')
+    expect(screen.queryByTestId('enable-rotation')).toBeNull()
   })
 })

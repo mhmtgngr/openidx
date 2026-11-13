@@ -542,8 +542,12 @@ export const api = {
       api.get<{ grants: VaultGrant[] | null }>(`/api/v1/vault/secrets/${id}/grants`),
     listCheckouts: (id: string) =>
       api.get<{ checkouts: VaultCheckout[] | null }>(`/api/v1/vault/secrets/${id}/checkouts`),
-    listPolicies: () =>
-      api.get<{ policies: VaultRotationPolicy[] | null }>('/api/v1/vault/rotation-policies'),
+    listPolicies: (secretId?: string) =>
+      api.get<{ policies: VaultRotationPolicy[] | null }>(
+        secretId
+          ? `/api/v1/vault/rotation-policies?secret_id=${encodeURIComponent(secretId)}`
+          : '/api/v1/vault/rotation-policies',
+      ),
     createPolicy: (body: VaultRotationPolicyInput) =>
       api.post<VaultRotationPolicy>('/api/v1/vault/rotation-policies', body),
     getPolicy: (id: string) =>
@@ -791,6 +795,8 @@ export interface PamEntry {
   url?: string
   settings: Record<string, unknown>
   has_secret: boolean
+  // The vault secret injected into sessions (id only), for its rotation policy.
+  vault_secret_id?: string
   credential_entry_id?: string
   credential_entry_name?: string
   allow_reveal: boolean
