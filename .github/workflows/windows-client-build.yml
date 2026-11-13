@@ -1190,7 +1190,7 @@ jobs:
               --notes "The agent release channel. Its assets are those of the newest agent-v* release, replaced by each one: agents poll latest.json here, and the install script downloads OpenIDX.msi from here. Do not delete it."
           fi
           gh release upload "$AGENT_CHANNEL" --clobber \
-            dist/latest.json dist/OpenIDX.msi dist/Install-OpenIDXAgent.ps1
+            dist/latest.json dist/OpenIDX.msi dist/Install-OpenIDXAgent.ps1 \
             dist/Uninstall-OpenIDXAgent.ps1
           gh release edit "$AGENT_CHANNEL" \
             --notes "The agent release channel, now serving $AGENT_TAG. Its assets are those of the newest agent-v* release, replaced by each one: agents poll latest.json here, and the install script downloads OpenIDX.msi from here. Do not delete it."
