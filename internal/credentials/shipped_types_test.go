@@ -122,7 +122,7 @@ func TestShippedTypesAreRegistered(t *testing.T) {
 // the i18n suite pins the same keys in every other declared language.
 func TestConsoleOffersEveryShippedType(t *testing.T) {
 	root := repoRoot(t)
-	page := filepath.Join(root, "web", "admin-console", "src", "pages", "rotation-policies.tsx")
+	page := filepath.Join(root, "web", "admin-console", "src", "lib", "rotation-policy-form.ts")
 	catalog := filepath.Join(root, "web", "admin-console", "src", "i18n", "locales", "en.ts")
 	if _, err := os.Stat(page); err != nil {
 		t.Skipf("console page not present in this checkout: %v", err)
@@ -147,8 +147,8 @@ func TestConsoleOffersEveryShippedType(t *testing.T) {
 // connector dropdown.
 func consoleConnectorTypes(t *testing.T, src string) map[string]bool {
 	t.Helper()
-	block := betweenDelimiters(t, src, "const CONNECTOR_TYPES = [", "]",
-		"rotation-policies.tsx no longer declares CONNECTOR_TYPES; if the dropdown moved, update this test")
+	block := betweenDelimiters(t, src, "export const CONNECTOR_TYPES = [", "]",
+		"lib/rotation-policy-form.ts no longer declares CONNECTOR_TYPES; if the dropdown moved, update this test")
 	return quotedIdents(block)
 }
 
