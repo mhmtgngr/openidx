@@ -32,6 +32,12 @@ vi.mock('../lib/api', () => ({
       requestModeration: vi.fn(),
       getModeration: vi.fn(),
     },
+    vault: {
+      listPolicies: vi.fn(),
+      listSecrets: vi.fn(),
+      createPolicy: vi.fn(),
+      updatePolicy: vi.fn(),
+    },
   },
 }))
 const toastSpy = vi.fn()
@@ -42,6 +48,7 @@ import { connectionPathSteps, ztnaRefusal } from '../lib/connection-path'
 import { api, PamEntry } from '../lib/api'
 
 const pam = api.pam as unknown as Record<string, ReturnType<typeof vi.fn>>
+const vault = api.vault as unknown as Record<string, ReturnType<typeof vi.fn>>
 
 const entryTypes = [
   { type: 'rdp', kind: 'session', label: 'RDP Session', protocol: 'rdp', secret_label: 'Password' },
@@ -75,6 +82,8 @@ function renderPage() {
 describe('PamConnectionsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vault.listPolicies.mockResolvedValue({ policies: [] })
+    vault.listSecrets.mockResolvedValue({ secrets: [] })
     pam.listEntryTypes.mockResolvedValue({ types: entryTypes })
     pam.listFolders.mockResolvedValue({ folders: [{ id: 'f1', name: 'Production', entry_count: 2, created_at: '', updated_at: '' }] })
     pam.listEntries.mockResolvedValue({ entries: [rdpEntry, gatedEntry] })
@@ -478,5 +487,51 @@ describe('ztnaRefusal', () => {
     expect(screen.getAllByTestId('pam-rule-recorded').length).toBeGreaterThan(0)
     fireEvent.click(screen.getAllByTitle('Reveal secret')[0])
     expect(await screen.findByTestId('pam-reveal-audit')).toHaveTextContent(/reason you give and the time.*30 seconds/)
+  })
+
+  describe('rotation', () => {
+    const base = { ...rdpEntry, has_secret: true }
+    const policy = (over: Record<string, unknown>) => ({
+      id: 'p1', secret_id: 's1', connector_type: 'ssh', interval_seconds: 86400,
+      enabled: true, last_status: 'succeeded', last_run_at: '2026-06-01T09:05:00Z', ...over,
+    })
+
+    it('shows the interval and last OK for a rotated secret', async () => {
+      pam.listEntries.mockResolvedValue({ entries: [{ ...base, vault_secret_id: 's1' }] })
+      vault.listPolicies.mockResolvedValue({ policies: [policy({})] })
+      renderPage()
+      expect(await screen.findByText(/Rotated every 24 h · last OK/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Enable rotation' })).toBeNull()
+    })
+
+    it('shows Rotation FAILED when the last run failed', async () => {
+      pam.listEntries.mockResolvedValue({ entries: [{ ...base, vault_secret_id: 's1' }] })
+      vault.listPolicies.mockResolvedValue({ policies: [policy({ last_status: 'failed' })] })
+      renderPage()
+      expect(await screen.findByText('Rotation FAILED')).toBeInTheDocument()
+    })
+
+    it('shows Not rotated and prefills an SSH policy from an ssh entry', async () => {
+      pam.listEntries.mockResolvedValue({ entries: [{
+        ...base, entry_type: 'ssh', hostname: 'bastion.local', port: 2222, username: 'ops', vault_secret_id: 's1',
+      }] })
+      vault.listPolicies.mockResolvedValue({ policies: [] })
+      vault.listSecrets.mockResolvedValue({ secrets: [] })
+      renderPage()
+      expect(await screen.findByText('Not rotated')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Enable rotation' }))
+      expect(await screen.findByTestId('cc-host')).toHaveValue('bastion.local')
+      expect(screen.getByTestId('cc-port')).toHaveValue(2222)
+      expect(screen.getByTestId('cc-username')).toHaveValue('ops')
+      expect(screen.getByTestId('cc-admin_username')).toHaveValue('')
+    })
+
+    it('shows no chip for an entry without a vaulted secret', async () => {
+      pam.listEntries.mockResolvedValue({ entries: [rdpEntry] })
+      vault.listPolicies.mockResolvedValue({ policies: [] })
+      renderPage()
+      await screen.findByText(rdpEntry.name)
+      expect(screen.queryByText('Not rotated')).toBeNull()
+    })
   })
 })

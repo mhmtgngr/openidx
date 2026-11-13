@@ -280,6 +280,7 @@ Limits, stated plainly:
 
 ## Going deeper
 
+- [PAM maturity assessment](pam-maturity.md) — what is mature, credential rotation, what is out of scope, and rotation runbooks
 - [Remote access lifecycle scenarios](https://github.com/mhmtgngr/openidx/blob/main/docs/remote-access-lifecycle-scenarios.md) — personas, RACI, four end-to-end scenarios
 - [Remote support runbook](https://github.com/mhmtgngr/openidx/blob/main/docs/remote-support-runbook.md) — attended support with device-side consent
 - [How the pillars interrelate](https://github.com/mhmtgngr/openidx/blob/main/docs/IAM_PAM_ZITI_INTERRELATION.md) — the seams between IAM, PAM and the overlay

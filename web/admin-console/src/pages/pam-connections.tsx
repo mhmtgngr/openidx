@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Folder, FolderPlus, Plus, Search, Star, Play, Eye, Trash2, Pencil, Upload,
   Server, Terminal, Monitor, Globe, KeyRound, StickyNote, CreditCard, ShieldCheck, Shield,
-  Send, Copy, Lock, Route, AlertTriangle, AppWindow,
+  Send, Copy, Lock, Route, AlertTriangle, AppWindow, RefreshCw,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -36,6 +36,9 @@ import { useSessionNotice } from '../hooks/use-session-notice'
 import { statusLines, refusalMessage, PAM_GUIDE_URL } from '../lib/pam-clarity'
 import { apiErrorBody } from '../lib/api-error'
 import { parseFingerprints } from '../lib/pam-cert'
+import { RotationPolicyDialog } from '../components/rotation-policy-dialog'
+import { rotationPrefillFromEntry, type PolicyFormState } from '../lib/rotation-policy-form'
+import type { VaultRotationPolicy } from '../lib/api'
 
 // Icon + accent per entry type, so the list reads like RDM's typed tree.
 const typeIcon = (t: string) => {
@@ -95,6 +98,18 @@ export function PamConnectionsPage() {
   const [favoritesOnly, setFavoritesOnly] = useState(false)
 
   const [showEntryDialog, setShowEntryDialog] = useState(false)
+  // Rotation: one list call, keyed by secret, drives the per-entry chip.
+  const { data: rotationPoliciesData } = useQuery({
+    queryKey: ['rotation-policies'],
+    queryFn: () => api.vault.listPolicies(),
+    retry: false,
+  })
+  const policyBySecret = useMemo(() => {
+    const m = new Map<string, VaultRotationPolicy>()
+    for (const p of rotationPoliciesData?.policies ?? []) m.set(p.secret_id, p)
+    return m
+  }, [rotationPoliciesData])
+  const [rotationPrefill, setRotationPrefill] = useState<Partial<PolicyFormState> | null>(null)
   // An entry whose session waits for a moderator, while the user asks for one.
   const [waitingFor, setWaitingFor] = useState<{ id: string; name: string } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -572,6 +587,9 @@ export function PamConnectionsPage() {
                             </Badge>
                           )}
                           {entry.has_secret && <Badge variant="outline" title={t('pages.pamConnections.badges.vaultedSecret')}><KeyRound className="h-3 w-3" /></Badge>}
+                          {entry.vault_secret_id && rotationPoliciesData && (
+                            <RotationChip policy={policyBySecret.get(entry.vault_secret_id)} />
+                          )}
                           {entry.ziti_enabled && <Badge className="bg-emerald-100 text-emerald-800" title={t('pages.pamConnections.badges.zitiTitle')}><Shield className="h-3 w-3 mr-1" />{t('pages.pamConnections.badges.ziti')}</Badge>}
                           {entry.kind === 'credential' && (credentialUsage.get(entry.id)?.length ?? 0) > 0 && (
                             <Badge
@@ -644,6 +662,17 @@ export function PamConnectionsPage() {
                             <Route className="h-4 w-4" />
                           </Button>
                         )}
+                        {entry.vault_secret_id && rotationPoliciesData && !policyBySecret.has(entry.vault_secret_id) && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setRotationPrefill(rotationPrefillFromEntry(entry))}
+                            title={t('pages.pamConnections.actions.enableRotation')}
+                            aria-label={t('pages.pamConnections.actions.enableRotation')}
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button size="sm" variant="ghost" onClick={() => openEdit(entry)} title={t('pages.pamConnections.actions.edit')}>
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -659,6 +688,14 @@ export function PamConnectionsPage() {
           )}
         </div>
       </div>
+
+      {rotationPrefill && (
+        <RotationPolicyDialog
+          open
+          onOpenChange={(o) => { if (!o) setRotationPrefill(null) }}
+          initial={rotationPrefill}
+        />
+      )}
 
       {/* Entry create/edit dialog */}
       <Dialog open={showEntryDialog} onOpenChange={setShowEntryDialog}>
@@ -1262,4 +1299,25 @@ export function PamConnectionsPage() {
 
     </div>
   )
+}
+
+// The rotation state of an entry's vaulted secret, at a glance.
+function RotationChip({ policy }: { policy?: VaultRotationPolicy }) {
+  const { t } = useTranslation()
+  if (!policy || !policy.enabled) {
+    return <Badge variant="outline" className="text-muted-foreground">{t('pages.pamConnections.rotation.notRotated')}</Badge>
+  }
+  if (policy.last_status === 'failed') {
+    return <Badge className="bg-red-100 text-red-800">{t('pages.pamConnections.rotation.failed')}</Badge>
+  }
+  const hours = Math.max(1, Math.round(policy.interval_seconds / 3600))
+  const label = policy.interval_seconds === 0
+    ? t('pages.pamConnections.rotation.manual')
+    : t('pages.pamConnections.rotation.every', { hours })
+  const last = policy.last_run_at && policy.last_status === 'succeeded'
+    ? ` · ${t('pages.pamConnections.rotation.lastOk', {
+        time: new Date(policy.last_run_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      })}`
+    : ''
+  return <Badge className="bg-green-100 text-green-800">{label}{last}</Badge>
 }

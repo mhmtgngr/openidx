@@ -274,7 +274,13 @@ func (s *Service) CreatePolicy(ctx context.Context, in PolicyInput) (*Policy, er
 }
 
 // ListPolicies returns all policies for the requesting org.
-func (s *Service) ListPolicies(ctx context.Context) ([]Policy, error) {
+func (s *Service) ListPolicies(ctx context.Context, secretID string) ([]Policy, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Explicit org predicate on top of RLS. An empty secretID lists all; a
+	// non-empty one narrows to that secret (the PAM console's per-entry chip).
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, secret_id::text, connector_type,
 		        connector_config::text, generation_policy::text,
@@ -282,7 +288,8 @@ func (s *Service) ListPolicies(ctx context.Context) ([]Policy, error) {
 		        next_run_at, last_run_at, COALESCE(last_status,''),
 		        created_at, updated_at
 		 FROM credential_rotation_policies
-		 ORDER BY created_at DESC`)
+		 WHERE org_id = $1 AND ($2 = '' OR secret_id::text = $2)
+		 ORDER BY created_at DESC`, org.ID, secretID)
 	if err != nil {
 		return nil, err
 	}

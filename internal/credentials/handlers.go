@@ -44,7 +44,7 @@ func (s *Service) handleCreatePolicy(c *gin.Context) {
 }
 
 func (s *Service) handleListPolicies(c *gin.Context) {
-	policies, err := s.ListPolicies(c.Request.Context())
+	policies, err := s.ListPolicies(c.Request.Context(), c.Query("secret_id"))
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list policies", err), s.logger)
 		return

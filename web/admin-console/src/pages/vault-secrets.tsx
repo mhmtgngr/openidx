@@ -40,6 +40,7 @@ import { KeyRound, Plus, Copy, Eye, Trash2, RefreshCw, Shield, X } from 'lucide-
 import { useToast } from '../hooks/use-toast'
 import { ConfirmAction } from '../components/confirm-action'
 import { useRevealedSecret, copyWithWarning } from '../lib/secret-reveal'
+import { RotationPolicyDialog } from '../components/rotation-policy-dialog'
 
 const typeColors: Record<string, string> = {
   password: 'bg-blue-100 text-blue-800',
@@ -117,6 +118,15 @@ export function VaultSecretsPage() {
   })
 
   const rotations: VaultRotationRun[] = rotationsData?.rotations || []
+
+  // The rotation policy for the selected secret, if any (server filters by secret_id).
+  const { data: secretPoliciesData } = useQuery({
+    queryKey: ['rotation-policies', 'secret', selectedId],
+    queryFn: () => api.vault.listPolicies(selectedId!),
+    enabled: !!selectedId,
+  })
+  const hasPolicy = (secretPoliciesData?.policies?.length ?? 0) > 0
+  const [showEnableRotation, setShowEnableRotation] = useState(false)
 
   const secrets: VaultSecretMeta[] = listData?.secrets || []
   const detail: VaultSecretDetail | undefined = detailData
@@ -651,6 +661,17 @@ export function VaultSecretsPage() {
 
                 {/* Rotations tab */}
                 <TabsContent value="rotations">
+                  {secretPoliciesData && !hasPolicy && (
+                    <div className="mt-2 flex items-center justify-between rounded-md border border-dashed p-3">
+                      <p className="text-sm text-muted-foreground">
+                        {t('pages.vaultSecrets.detail.noPolicy')}
+                      </p>
+                      <Button size="sm" onClick={() => setShowEnableRotation(true)} data-testid="enable-rotation">
+                        <RefreshCw className="h-4 w-4 mr-1" />
+                        {t('pages.vaultSecrets.detail.enableRotation')}
+                      </Button>
+                    </div>
+                  )}
                   <div className="divide-y mt-2">
                     {rotations.map((r) => (
                       <div key={r.id} className="py-2 flex items-center justify-between">
@@ -658,7 +679,7 @@ export function VaultSecretsPage() {
                           <div className="flex items-center gap-2">
                             <Badge
                               className={
-                                r.status === 'success'
+                                r.status === 'succeeded'
                                   ? 'bg-green-100 text-green-800'
                                   : r.status === 'failed'
                                   ? 'bg-red-100 text-red-800'
@@ -695,6 +716,14 @@ export function VaultSecretsPage() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {selectedId && showEnableRotation && (
+        <RotationPolicyDialog
+          open={showEnableRotation}
+          onOpenChange={setShowEnableRotation}
+          initial={{ secretId: selectedId }}
+        />
       )}
 
       {/* Reveal modal */}

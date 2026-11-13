@@ -93,6 +93,7 @@ nav:
   - Governance (IGA): guide/governance.md
 
   - Privileged Access (PAM): guide/privileged-access.md
+  - PAM Maturity: guide/pam-maturity.md
 
   - Zero Trust Network (ZTNA): guide/network-access.md
 

@@ -4524,6 +4524,8 @@ const tr: typeof en = {
         checkoutUse: 'Kullanım',
         noCheckouts: 'Henüz alım yok',
         noRotations: 'Henüz döndürme yok',
+        noPolicy: 'Bu gizli bilgi için döndürme politikası yok.',
+        enableRotation: 'Döndürmeyi etkinleştir',
       },
       revealDialog: {
         title: 'Gizli Değeri Göster',
@@ -4675,6 +4677,13 @@ const tr: typeof en = {
       },
     },
     pamConnections: {
+      rotation: {
+        every: 'Her {{hours}} sa\'te döndürülür',
+        lastOk: 'son başarılı {{time}}',
+        failed: 'Döndürme BAŞARISIZ',
+        notRotated: 'Döndürülmüyor',
+        manual: 'Döndürme: elle',
+      },
       resourceName: 'bağlantılar',
       subtitle:
         'Devolutions RDM tarzı bağlantı yöneticisi — RDP/SSH/VNC oturumlarını kimlik bilgisi sunucu tarafında enjekte edilerek başlatın. Parolayı hiçbir zaman görmezsiniz.',
@@ -4712,6 +4721,7 @@ const tr: typeof en = {
         zitiEnable: 'Ziti erişimini etkinleştir (hedefe sıfır güven örtüsü)',
         zitiDisable: 'Ziti erişimini kapat (doğrudan erişime dön)',
         zitiDisableEnforced: 'Ziti erişimi açık kalır: PAM_REQUIRE_ZTNA=enforce doğrudan erişimi reddeder. Kaydı kaldırmak için silin.',
+        enableRotation: 'Döndürmeyi etkinleştir',
         launchPath: 'Başlatma yolu',
         edit: 'Düzenle',
         delete: 'Sil',
