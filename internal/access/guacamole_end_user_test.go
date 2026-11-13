@@ -91,6 +91,18 @@ func TestGuacEndUserSelfService(t *testing.T) {
 		t.Errorf("credential_injected = true, want false (no vault_secret_id set)")
 	}
 
+	// Every rule flag reaches the end user, so the page can explain it.
+	if _, err := db.Pool.Exec(ctx, `
+		UPDATE pam_entries SET require_moderator = true, exclusive_checkout = true,
+		       break_glass_enabled = true, allow_reveal = true
+		 WHERE id = $1::uuid`, entryID); err != nil {
+		t.Fatalf("set rule flags: %v", err)
+	}
+	flags := fetchMyConnections(t, s, defaultOrg, userA)[0]
+	if !flags.RequireModerator || !flags.ExclusiveCheckout || !flags.BreakGlassEnabled || !flags.AllowReveal || flags.DualControlRequired {
+		t.Errorf("rule flags = %+v, want moderator/exclusive/break-glass/reveal on and dual control off", flags)
+	}
+
 	// my-session-requests: user A sees only their own approved request.
 	reqs := fetchMySessionRequests(t, s, defaultOrg, userA)
 	if len(reqs) != 1 {

@@ -29,6 +29,14 @@ type GuacUserConnection struct {
 	RequireApproval    bool   `json:"require_approval"`
 	RecordSession      bool   `json:"record_session"`
 	CredentialInjected bool   `json:"credential_injected"`
+	// The remaining rule flags, so the end-user page can say in plain words
+	// what happens during a session. Booleans and the reach mode only.
+	RequireModerator    bool   `json:"require_moderator"`
+	DualControlRequired bool   `json:"dual_control_required"`
+	ExclusiveCheckout   bool   `json:"exclusive_checkout"`
+	BreakGlassEnabled   bool   `json:"break_glass_enabled"`
+	AllowReveal         bool   `json:"allow_reveal"`
+	ReachMode           string `json:"reach_mode"`
 }
 
 // GuacMySessionRequest is a session request joined with its connection info so
@@ -80,7 +88,9 @@ func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT gc.route_id, pr.name, gc.protocol, gc.hostname, gc.port, e.id::text,
 		        e.require_approval, e.record_session,
-		        (e.vault_secret_id IS NOT NULL) AS credential_injected
+		        (e.vault_secret_id IS NOT NULL) AS credential_injected,
+		        e.require_moderator, e.dual_control_required, e.exclusive_checkout,
+		        e.break_glass_enabled, e.allow_reveal, COALESCE(e.reach_mode, '')
 		   FROM guacamole_connections gc
 		   JOIN proxy_routes pr ON pr.id = gc.route_id
 		   JOIN pam_entries e ON e.proxy_route_id = gc.route_id AND e.org_id = gc.org_id
@@ -105,6 +115,8 @@ func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 		if err := rows.Scan(
 			&r.RouteID, &r.Name, &r.Protocol, &r.Hostname, &r.Port, &entryID,
 			&r.RequireApproval, &r.RecordSession, &r.CredentialInjected,
+			&r.RequireModerator, &r.DualControlRequired, &r.ExclusiveCheckout,
+			&r.BreakGlassEnabled, &r.AllowReveal, &r.ReachMode,
 		); err != nil {
 			s.logger.Warn("handleListMyGuacConnections: scan failed", zap.Error(err))
 			continue

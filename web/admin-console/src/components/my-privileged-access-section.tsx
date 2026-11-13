@@ -16,7 +16,7 @@ import {
 } from './ui/alert-dialog'
 import { QueryError } from './query-error'
 import { useSessionNotice } from '../hooks/use-session-notice'
-import { statusLines, refusalMessage, PAM_GUIDE_URL } from '../lib/pam-clarity'
+import { statusLines, refusalMessage, PAM_GUIDE_URL, type PamRuleFlags } from '../lib/pam-clarity'
 import { apiErrorBody } from '../lib/api-error'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -30,6 +30,12 @@ interface UserConnection {
   require_approval: boolean
   record_session: boolean
   credential_injected: boolean
+  require_moderator?: boolean
+  dual_control_required?: boolean
+  exclusive_checkout?: boolean
+  break_glass_enabled?: boolean
+  allow_reveal?: boolean
+  reach_mode?: string
 }
 
 interface MySessionRequest {
@@ -108,8 +114,8 @@ export function MyPrivilegedAccessSection({
       variant: 'destructive',
     })
   }
-  const startConnect = (conn: { route_id: string; name: string; record_session?: boolean }) =>
-    guard({ id: conn.route_id, name: conn.name, record_session: conn.record_session }, () =>
+  const startConnect = (conn: { route_id: string; name: string } & PamRuleFlags) =>
+    guard({ ...conn, id: conn.route_id, name: conn.name }, () =>
       connectMutation.mutate(conn.route_id),
     )
 
