@@ -253,15 +253,23 @@ func splitCtrlAddress(addr string) (string, string) {
 // ZITI_ENROLL_TOKEN holds the JWT itself (not a path) and is enrolled on the
 // first start; ZITI_ROUTER_MODE=host makes it a hosting (Bind) router without
 // tproxy. The volume keeps the enrolled identity across restarts.
+// When advertised is empty the router is listener-less (outbound-only): no
+// published port and no ZITI_ROUTER_ADVERTISED_ADDRESS — the common private
+// on-prem connector behind NAT.
 func routerOnboardCommand(name, jwt, ctrlHost, ctrlPort, advertised, tag string) string {
+	listener := ""
+	if advertised != "" {
+		listener = fmt.Sprintf("-p 3022:3022 "+
+			"-e ZITI_ROUTER_ADVERTISED_ADDRESS=%s -e ZITI_ROUTER_PORT=3022 ", advertised)
+	}
 	return fmt.Sprintf("docker run -d --name %s --restart=unless-stopped "+
-		"-p 3022:3022 -v %s-data:/ziti-router "+
+		"-v %s-data:/ziti-router "+
 		"-e ZITI_ENROLL_TOKEN='%s' "+
 		"-e ZITI_CTRL_ADVERTISED_ADDRESS=%s -e ZITI_CTRL_ADVERTISED_PORT=%s "+
-		"-e ZITI_ROUTER_ADVERTISED_ADDRESS=%s -e ZITI_ROUTER_PORT=3022 "+
+		"%s"+
 		"-e ZITI_ROUTER_MODE=host "+
 		"openziti/ziti-router:%s",
-		name, name, jwt, ctrlHost, ctrlPort, advertised, tag)
+		name, name, jwt, ctrlHost, ctrlPort, listener, tag)
 }
 
 // handleRouterEnrollToken onboards an edge router into a site: it creates the
@@ -289,12 +297,10 @@ func (s *Service) handleRouterEnrollToken(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name must be 1-64 letters, digits, dots, hyphens or underscores"})
 		return
 	}
+	// advertised_address is optional: empty means a private, outbound-only
+	// connector (no listener other routers dial).
 	advertised := strings.TrimSpace(req.AdvertisedAddress)
-	if advertised == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "advertised_address is required: the host name or IP other routers and clients reach this router at"})
-		return
-	}
-	if net.ParseIP(advertised) == nil && !validHostName(advertised) {
+	if advertised != "" && net.ParseIP(advertised) == nil && !validHostName(advertised) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "advertised_address must be a host name or an IP address (no port)"})
 		return
 	}
@@ -371,6 +377,9 @@ func (s *Service) handleRouterEnrollToken(c *gin.Context) {
 		"enrollment_jwt":  jwt,
 		"controller":      ctrl,
 		"onboard_command": routerOnboardCommand(name, jwt, ctrlHost, ctrlPort, advertised, tag),
+	}
+	if cmd := connectorInstallCommand(s.boxOrigin(), jwt, ctrlHost, ctrlPort, name, advertised); cmd != "" {
+		resp["install_command"] = cmd
 	}
 	if ctrlHost == "" {
 		resp["warning"] = "ZITI_CTRL_PUBLIC_ADDRESS is not set; fill in ZITI_CTRL_ADVERTISED_ADDRESS with the controller address this router reaches"
