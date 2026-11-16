@@ -279,7 +279,10 @@ when the tunnel is not connected, the reason first.
   token, key or proxy password. Exit status: 0 no problem, 1 a problem found,
   2 the check itself failed. An ordinary user on Linux cannot read the agent's
   settings, and there the tunnel's state is not visible to the command yet:
-  run it as root for the full picture.
+  run it as root for the full picture. The Windows tray offers the same check
+  as **Why can't I connect?**. When something is wrong the output ends with a
+  support code (`OX1-…`) that names the failed checks and nothing else, for a
+  user to read to IT when the device cannot reach the server.
 - **Logs.** The agent logs every state change with its reason (logger
   `tunnel`). In `child` mode the tunneler's own output goes to
   `<config dir>/tunnel/ziti-edge-tunnel.log`, moved to `.log.1` at 10 MB. In
