@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "agent_id": "agent-1",
+  "agent_version": "0.6.0",
+  "os": "windows",
+  "collected_at": "2026-11-16T14:02:00Z",
+  "clock_skew_s": -12,
+  "checks": [
+    {
+      "id": "config",
+      "status": "pass",
+      "ms": 1
+    },
+    {
+      "id": "tunnel",
+      "status": "fail",
+      "code": "TUNNEL_DOWN",
+      "detail": "the tunneler exited",
+      "ms": 3
+    }
+  ],
+  "repairs": [
+    {
+      "id": "restart_service",
+      "outcome": "needs_elevation",
+      "detail": "x"
+    }
+  ],
+  "tunnel": {
+    "state": "degraded",
+    "version": "1.18.7",
+    "last_seen": "2026-11-16T14:01:00Z",
+    "services": [
+      "svc-a"
+    ],
+    "mode": "child",
+    "policy_version": "p1",
+    "policy_gaps": [
+      "full_tunnel"
+    ],
+    "last_error": "the tunneler exited"
+  },
+  "enrollment": {
+    "enrolled": true,
+    "auth_invalid": true,
+    "revoked": true,
+    "cert_not_after": "2027-02-14T14:02:00Z"
+  },
+  "net": {
+    "proxy_mode": "configured",
+    "proxy_host": "proxy.example.test:8080",
+    "dns_ok": true
+  }
+}

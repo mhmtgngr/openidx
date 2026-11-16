@@ -153,6 +153,8 @@ func (h *AgentAPIHandler) RegisterAgentPublicRoutes(r *gin.RouterGroup) {
 	// An agent that enrolled before it had a device key offers it here.
 	r.POST("/agent/device-key", h.HandleRegisterDeviceKey)
 	r.POST("/agent/commands/:command_id/result", h.HandleAgentCommandResult)
+	// What the device's own doctor found (agent_diagnostics.go).
+	r.POST("/agent/diagnostics", h.HandleAgentDiagnostics)
 }
 
 // RegisterAgentAdminRoutes registers endpoints that REQUIRE a valid OpenIDX
@@ -1935,6 +1937,7 @@ func (h *AgentAPIHandler) StartGracePeriodEnforcer(ctx context.Context, interval
 				h.enforceExpiredGracePeriods(ctx)
 				h.sweepSilentDevices(ctx)
 				h.expireAgentCommands(ctx)
+				h.expireAgentDiagnostics(ctx)
 			}
 		}
 	}()

@@ -4877,6 +4877,45 @@ paths:
           description: No such command awaiting this device's result
         '413':
           description: The artifact exceeds 8 MiB
+  /api/v1/access/agent/diagnostics:
+    post:
+      tags: [Agent Enrollment]
+      summary: A device sends what its own doctor found (agent credential)
+      description: >-
+        The body is a diagnostic bundle, schema 1, as `openidx-agent doctor --json`
+        prints it. It is parsed strictly (unknown fields are refused), bounded,
+        and stored as evidence for "why can't this device connect". The answer
+        is the rule engine's verdict from the bundle alone.
+      operationId: handleAgentDiagnostics
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleAgentDiagnostics
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [schema, checks]
+              additionalProperties: true
+              properties:
+                schema: {type: integer, enum: [1]}
+                checks: {type: array, items: {type: object, additionalProperties: true}}
+      responses:
+        '200':
+          description: Stored; the verdict drawn from the bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  verdict: {type: object, additionalProperties: true}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: The bundle exceeds 64 KiB
   /api/v1/access/agents/{agent_id}/retire:
     parameters:
       - name: agent_id
