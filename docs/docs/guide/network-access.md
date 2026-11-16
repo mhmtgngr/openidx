@@ -11,6 +11,7 @@ were granted*.
 | Piece | What it is |
 |---|---|
 | **Ziti controller + router** | The overlay's brain and data plane, deployed with the stack |
+| **Connector** | A small outbound-only service on a server inside a private network that publishes the apps behind it — see the [Connectors guide](connectors.md) |
 | **Identity** | Every enabled OpenIDX user is mirrored to a Ziti identity by a 30-second sync; group memberships become identity attributes |
 | **Service** | A dark endpoint (an internal web app, an SSH box, a database) registered on the overlay |
 | **Dial policy** | Who may open circuits to which services — derived from OpenIDX state by a desired-state reconciler |

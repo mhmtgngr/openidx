@@ -96,6 +96,7 @@ nav:
   - PAM Maturity: guide/pam-maturity.md
 
   - Zero Trust Network (ZTNA): guide/network-access.md
+  - Connectors: guide/connectors.md
 
   - Deployment:
       - Docker Compose: deployment/docker.md
