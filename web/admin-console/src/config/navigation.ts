@@ -231,6 +231,7 @@ export const navigation: NavDomainGroup[] = [
           { name: 'Overlay Network', nameKey: 'nav.items.overlayNetwork', href: '/ziti-network', icon: Globe, minRole: 'admin', keywords: ['openziti', 'identities', 'edge routers'],
             children: [
               { name: 'Network Topology', nameKey: 'nav.items.networkTopology', href: '/network-topology', icon: Share2, minRole: 'operator', keywords: ['map', 'overlay', 'graph', 'topology'] },
+              { name: 'Connectors', nameKey: 'nav.items.connectors', href: '/connectors', icon: Server, minRole: 'admin', keywords: ['connector', 'bağlayıcı', 'edge router', 'site', 'enroll'] },
               { name: 'Network Setup', nameKey: 'nav.items.networkSetup', href: '/ziti-setup', icon: Server, minRole: 'admin', keywords: ['ziti setup', 'controller', 'router'] },
               { name: 'Ziti Discovery', nameKey: 'nav.items.zitiDiscovery', href: '/ziti-discovery', icon: Search, minRole: 'admin', keywords: ['scan', 'discover services'] },
               { name: 'AI Insights', nameKey: 'nav.items.aiInsights', href: '/ziti-ai-insights', icon: Brain, minRole: 'admin', keywords: ['anomaly', 'risk score', 'quarantine', 'ai'] },

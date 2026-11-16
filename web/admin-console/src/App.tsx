@@ -46,6 +46,7 @@ import {
   ProxyRoutes,
   UpstreamPools,
   ZitiSetup,
+  Connectors,
   ZitiNetwork,
   NetworkTopology,
   OpsCockpit,
@@ -308,6 +309,7 @@ function App() {
         <Route path="proxy-routes" element={<AdminRoute><ProxyRoutes /></AdminRoute>} />
         <Route path="upstream-pools" element={<AdminRoute><UpstreamPools /></AdminRoute>} />
         <Route path="ziti-setup" element={<ZitiSetup />} />
+        <Route path="connectors" element={<Connectors />} />
         <Route path="ziti-network" element={<ZitiNetwork />} />
         <Route path="network-topology" element={<NetworkTopology />} />
         <Route path="ops-cockpit" element={<OpsCockpit />} />
