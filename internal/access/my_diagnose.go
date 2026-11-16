@@ -71,25 +71,43 @@ func (s *Service) handleMyDiagnose(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up your devices"})
 		return
 	}
-	device := pickDevice(devices, body.AgentID)
-	if body.AgentID != "" && device == nil {
+	out, err := s.myDiagnosis(ctx, org.ID, uid, body.AgentID, devices)
+	switch {
+	case errors.Is(err, errNoSuchDevice):
 		s.logger.Warn("my diagnose: device is not the caller's",
 			zap.String("user_id", logsafe.Clean(uid)), zap.String("agent_id", logsafe.Clean(body.AgentID)))
 		c.JSON(http.StatusNotFound, gin.H{"error": "no such device"})
-		return
+	case err != nil:
+		s.logger.Error("my diagnose: evidence lookup failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to gather evidence"})
+	default:
+		c.JSON(http.StatusOK, out)
 	}
+}
 
+// errNoSuchDevice is "not found" for a device outside the caller's set, the
+// same answer as one that does not exist.
+var errNoSuchDevice = errors.New("no such device")
+
+// myDiagnosis is the verdict for one of the person's devices: the one named,
+// or with no name the one that reported most recently. devices is the set
+// collectUserDevices returned for this person, which is what keeps the
+// answer to their own devices. The assistant's tools call it too, so a chat
+// answer and the card on the page can never disagree.
+func (s *Service) myDiagnosis(ctx context.Context, orgID, uid, agentID string, devices []UserDeviceEntry) (MyDiagnosis, error) {
+	device := pickDevice(devices, agentID)
+	if agentID != "" && device == nil {
+		return MyDiagnosis{}, errNoSuchDevice
+	}
 	now := time.Now().UTC()
 	out := MyDiagnosis{GeneratedAt: now}
 	ev := diagnose.Evidence{Now: now}
 	if device != nil {
 		out.AgentID = device.AgentID
 		ev.Device = s.deviceFacts(device, now)
-		tunnelState, bundle, err := s.deviceDiagnosticState(ctx, org.ID, device.AgentID)
+		tunnelState, bundle, err := s.deviceDiagnosticState(ctx, orgID, device.AgentID)
 		if err != nil {
-			s.logger.Error("my diagnose: evidence lookup failed", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to gather evidence"})
-			return
+			return MyDiagnosis{}, err
 		}
 		ev.Device.TunnelState = tunnelState
 		ev.Bundle = bundle
@@ -102,9 +120,9 @@ func (s *Service) handleMyDiagnose(c *gin.Context) {
 	// A device that is there and has told us nothing recent is asked to look
 	// at itself, so the next answer rests on more than the server's records.
 	if device != nil && out.BundleAt == nil && ev.Device.Live && ev.Device.Status == diagnose.DeviceActive {
-		out.BundleRequested = s.requestDeviceBundle(ctx, org.ID, device.AgentID, uid)
+		out.BundleRequested = s.requestDeviceBundle(ctx, orgID, device.AgentID, uid)
 	}
-	c.JSON(http.StatusOK, out)
+	return out, nil
 }
 
 // requestDeviceBundle queues a "diagnose" command for a device unless one is

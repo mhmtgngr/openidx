@@ -157,6 +157,7 @@ type ProxySession struct {
 
 // Service provides access proxy operations
 type Service struct {
+	agentic              agenticTools // the assistants' tool registry (agentic_tools.go)
 	db                   *database.PostgresDB
 	redis                *database.RedisClient
 	config               *config.Config

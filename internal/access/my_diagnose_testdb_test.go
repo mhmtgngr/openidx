@@ -27,6 +27,7 @@ type diagnoseHarness struct {
 	orgID  string
 	router *gin.Engine
 	as     *string
+	svc    *Service
 }
 
 func newDiagnoseHarness(t *testing.T, slug string) (*diagnoseHarness, string, string) {
@@ -63,6 +64,7 @@ func newDiagnoseHarness(t *testing.T, slug string) (*diagnoseHarness, string, st
 		}
 	}
 	s := &Service{db: db, logger: zap.NewNop(), config: &config.Config{AgentLivenessTimeout: "10m"}}
+	h.svc = s
 	caller := ada
 	h.as = &caller
 	h.router = gin.New()
