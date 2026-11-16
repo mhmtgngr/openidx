@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -164,7 +165,7 @@ func TestOpenAICompatRoundTrip(t *testing.T) {
 }
 
 func TestOpenAIRefusesBadConfigAndServerErrors(t *testing.T) {
-	for _, c := range []OpenAIConfig{{BaseURL: "ftp://x/v1", Model: "m"}, {BaseURL: "not a url", Model: "m"}, {BaseURL: "http://h/v1"}} {
+	for _, c := range []OpenAIConfig{{BaseURL: "http://169.254.169.254/v1", Model: "m"}, {BaseURL: "http://0.0.0.0/v1", Model: "m"}, {BaseURL: "http://[fe80::1]/v1", Model: "m"}, {BaseURL: "ftp://x/v1", Model: "m"}, {BaseURL: "not a url", Model: "m"}, {BaseURL: "http://h/v1"}} {
 		if _, err := NewOpenAI(c); err == nil {
 			t.Errorf("%+v was accepted", c)
 		}
@@ -189,5 +190,25 @@ func TestNewPicksTheProvider(t *testing.T) {
 	}
 	if ValidKind("gpt") || !ValidKind(KindAnthropic) {
 		t.Error("ValidKind")
+	}
+}
+
+func TestOpenAIDoesNotFollowRedirectsOrDialForbiddenAddresses(t *testing.T) {
+	hit := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+	o, err := NewOpenAI(OpenAIConfig{BaseURL: redirector.URL, Model: "m"}) // loopback is allowed
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Chat(context.Background(), request()); err == nil || hit {
+		t.Errorf("a redirect was followed (hit=%v, err=%v)", hit, err)
+	}
+	if forbidAddress(net.ParseIP("169.254.169.254")) == nil || forbidAddress(net.ParseIP("10.0.0.5")) != nil || forbidAddress(net.ParseIP("127.0.0.1")) != nil {
+		t.Error("forbidAddress: link-local must be refused; private and loopback allowed")
 	}
 }

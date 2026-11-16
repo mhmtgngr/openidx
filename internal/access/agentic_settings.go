@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -204,8 +203,8 @@ func (s *Service) handlePutAgenticSettings(c *gin.Context) {
 	}
 	if body.BaseURL != nil {
 		u := strings.TrimSpace(*body.BaseURL)
-		if parsed, perr := url.Parse(u); u != "" && (len(u) > 512 || perr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "") {
-			bad("base_url must be an http(s) address such as http://ollama.internal:11434/v1")
+		if u != "" && (len(u) > 512 || provider.CheckBaseURL(u) != nil) {
+			bad("base_url must be an http(s) address such as http://ollama.internal:11434/v1 (not link-local or unspecified)")
 			return
 		}
 		next.BaseURL = u
@@ -230,6 +229,13 @@ func (s *Service) handlePutAgenticSettings(c *gin.Context) {
 			}
 			next.apiKeyEnc = enc
 		}
+	}
+
+	// A stored key belongs to the endpoint it was stored for. Pointing the
+	// assistant at a different provider or address must bring its own key, or
+	// the old one would be sent to the new place.
+	if (next.Provider != cur.Provider || next.BaseURL != cur.BaseURL) && body.APIKey == nil {
+		next.apiKeyEnc = ""
 	}
 
 	actor := c.GetString("user_id")

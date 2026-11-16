@@ -212,8 +212,16 @@ func TestAssistantProviderSettings(t *testing.T) {
 
 	// Moving to a model of their own drops the cloud consent; coming back
 	// asks again.
-	if code, out := put(map[string]any{"provider": "openai_compat", "model": "llama3.1", "base_url": "http://ollama.internal:11434/v1", "redaction": "off"}); code != http.StatusOK || out["cloud_consent_at"] != nil {
-		t.Errorf("local model: %d %v", code, out)
+	if code, out := put(map[string]any{"provider": "openai_compat", "model": "llama3.1", "base_url": "http://ollama.internal:11434/v1", "redaction": "off"}); code != http.StatusOK ||
+		out["cloud_consent_at"] != nil || out["has_api_key"] != false {
+		t.Errorf("local model (the cloud key must not follow): %d %v", code, out)
+	}
+	if code, _ := put(map[string]any{"base_url": "http://169.254.169.254/v1"}); code != http.StatusBadRequest {
+		t.Errorf("the metadata address answered %d", code)
+	}
+	put(map[string]any{"api_key": "local-key"})
+	if code, out := put(map[string]any{"base_url": "http://other.internal:8000/v1"}); code != http.StatusOK || out["has_api_key"] != false {
+		t.Errorf("a new address must not inherit the key: %d %v", code, out)
 	}
 	if code, _ := put(map[string]any{"provider": "anthropic"}); code != http.StatusBadRequest {
 		t.Errorf("returning to the cloud without consent answered %d", code)

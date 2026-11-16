@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/openidx/openidx/internal/agentic"
@@ -48,13 +50,33 @@ func NewOpenAI(c OpenAIConfig) (*OpenAI, error) {
 	if c.Model == "" {
 		return nil, errors.New("openai-compatible: no model")
 	}
+	if err := CheckBaseURL(c.BaseURL); err != nil {
+		return nil, err
+	}
 	hc := c.HTTPClient
 	if hc == nil {
 		to := c.Timeout
 		if to <= 0 {
 			to = 60 * time.Second
 		}
-		hc = &http.Client{Timeout: to}
+		hc = &http.Client{
+			Timeout: to,
+			// A model server that redirects is not one to follow: a redirect
+			// is the usual way past an address check.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			Transport: &http.Transport{DialContext: (&net.Dialer{
+				Timeout: 10 * time.Second,
+				// Checked on the address actually dialled, after DNS, so a name
+				// that resolves somewhere forbidden is refused too.
+				Control: func(_, address string, _ syscall.RawConn) error {
+					host, _, err := net.SplitHostPort(address)
+					if err != nil {
+						return err
+					}
+					return forbidAddress(net.ParseIP(host))
+				},
+			}).DialContext},
+		}
 	}
 	return &OpenAI{base: u.String(), model: c.Model, key: c.APIKey, toolCalls: !c.NoTools, hc: hc}, nil
 }
@@ -193,4 +215,32 @@ func toOpenAIMessages(m agentic.Message) []oaMessage {
 		out = append([]oaMessage{msg}, out...)
 	}
 	return out
+}
+
+// forbidAddress refuses the addresses an address-bearing setting must never
+// reach even though private networks are fine (a model server on the
+// organization's own network is the point): link-local, which holds the cloud
+// metadata service, the unspecified address and multicast.
+func forbidAddress(ip net.IP) error {
+	if ip == nil {
+		return errors.New("openai-compatible: not an IP address")
+	}
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return errors.New("openai-compatible: that address is not allowed")
+	}
+	return nil
+}
+
+// CheckBaseURL is the save-time check on an endpoint address: http(s), a host,
+// and, when the host is a literal IP, one forbidAddress allows. A host name is
+// checked again after resolution, when it is dialled.
+func CheckBaseURL(raw string) error {
+	u, err := url.Parse(strings.TrimRight(raw, "/"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return errors.New("openai-compatible: base URL must be http(s)://host/v1")
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		return forbidAddress(ip)
+	}
+	return nil
 }
