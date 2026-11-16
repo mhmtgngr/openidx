@@ -10323,6 +10323,21 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/downloads/connector/install.sh:
+    get:
+      summary: Connector installer script
+      description: Serves the fixed connector install script. Public; the enrollment token passed on the command line is the entitlement.
+      tags: [Connectors]
+      security: []
+      x-openidx-handler: handleConnectorInstallScript
+      responses:
+        '200':
+          description: The shell script
+          content:
+            text/x-shellscript:
+              schema:
+                type: string
+
   /downloads/agent/{channel}/{file}:
     parameters:
       - name: channel
