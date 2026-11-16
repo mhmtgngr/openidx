@@ -38,6 +38,7 @@ import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
+import { WhyCantIConnect } from '../components/why-cant-i-connect'
 
 interface MyZitiIdentity {
   linked: boolean
@@ -320,6 +321,8 @@ export function MyDevicesPage() {
           )}
         </Card>
       )}
+
+      <WhyCantIConnect />
 
       {/* Devices set up for direct access, with their live security posture. */}
       {endpointAgents.length > 0 && (

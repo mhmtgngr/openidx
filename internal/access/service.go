@@ -674,6 +674,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/users/:id/devices/:agentId/revoke", adminOnly, svc.handleRevokeUserDevice)
 		// Self-service: the caller's own correlated devices (compliance visibility).
 		api.GET("/my-devices", svc.handleMyDevices)
+		// "Why can't I connect?" for one of the caller's own devices, and the
+		// operator's reading of a support code a user gave over the phone
+		// (my_diagnose.go).
+		api.POST("/my/diagnose", svc.handleMyDiagnose)
+		api.POST("/diagnose/decode", operatorTier, svc.handleDecodeSupportCode)
 
 		// Self-service: "My Network" — what the caller can reach, in plain
 		// language (no overlay vocabulary). Deliberately not adminOnly.
