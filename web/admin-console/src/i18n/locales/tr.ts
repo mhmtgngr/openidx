@@ -467,6 +467,118 @@ const tr: typeof en = {
       d90: 'Son 90 Gün',
     },
   },
+  // "Why can't I connect?" (components/why-cant-i-connect.tsx). The cause codes
+  // are the rule engine's (internal/diagnose/causes.go); a Go test there checks
+  // that every one of them has words here, in every locale.
+  diagnose: {
+    title: 'Neden bağlanamıyorum?',
+    description: 'Cihazınızı denetleyin; sorunun ne olduğunu ve ne yapmanız gerektiğini görün.',
+    button: 'Cihazımı denetle',
+    again: 'Yeniden denetle',
+    checking: 'Denetleniyor…',
+    failed: 'Denetim tamamlanamadı. Biraz sonra tekrar deneyin.',
+    healthy: 'Sorun bulunmadı.',
+    healthyHint: 'Cihazınız kayıtlı, rapor veriyor ve ağa girmesine izin var. Yine de bir uygulama açılmıyorsa hangisi olduğunu BT\'ye bildirin.',
+    noBundleHint: 'Bu yanıt sunucunun bildiklerine dayanıyor. Daha kesin bir yanıt için cihazda OpenIDX tepsi simgesini açıp "Neden bağlanamıyorum?"u seçin ya da orada `openidx-agent doctor` çalıştırın.',
+    cause: {
+      DEVICE_REVOKED: {
+        title: 'Bir yönetici bu cihazın erişimini kaldırmış.',
+        action: 'Cihazın yeniden etkinleştirilmesi için BT ile görüşün.',
+      },
+      DEVICE_SUSPENDED: {
+        title: 'Bu cihaz, güvenlik gereksinimlerini süresinde karşılamadığı için askıya alındı.',
+        action: 'Aşağıda cihazınızın altında listelenen eksikleri giderin, sonra BT\'den yeniden etkinleştirmesini isteyin.',
+      },
+      DEVICE_PENDING: {
+        title: 'Bu cihaz bir yöneticinin onayını bekliyor.',
+        action: 'Sizin yapmanız gereken bir şey yok; acilse BT\'den cihazı onaylamasını isteyin.',
+      },
+      NO_DEVICE: {
+        title: 'OpenIDX\'e kayıtlı bir cihazınız yok.',
+        action: '"Cihaz ekle"yi seçin ve bağlanmak istediğiniz bilgisayarda adımları izleyin.',
+      },
+      NOT_ENROLLED: {
+        title: 'Bu cihazdaki ajan henüz kaydedilmemiş.',
+        action: '"Cihaz ekle"yi seçin ve o cihazda adımları izleyin.',
+      },
+      AUTH_INVALID: {
+        title: 'Sunucu bu cihazın oturumunu artık kabul etmiyor.',
+        action: 'Cihazı "Cihaz ekle" ile yeniden kaydedin.',
+      },
+      SERVICE_NOT_RUNNING: {
+        title: 'OpenIDX ajanı cihazda çalışmıyor.',
+        action: 'Bilgisayarı yeniden başlatın ya da BT\'den OpenIDX Agent servisini başlatmasını isteyin.',
+      },
+      DEVICE_OFFLINE: {
+        title: 'Cihaz bir süredir OpenIDX ile iletişim kurmadı.',
+        action: 'Cihazı açın, internete bağlı olduğunu ve OpenIDX ajanının çalıştığını kontrol edin, sonra yeniden denetleyin.',
+      },
+      CLOCK_SKEW: {
+        title: 'Cihazın saati beş dakikadan fazla yanlış.',
+        action: 'Sistem ayarlarından otomatik tarih ve saati açın.',
+      },
+      DNS_FAIL: {
+        title: 'Cihaz bulunduğu ağda OpenIDX sunucusunu bulamıyor.',
+        action: 'Cihazın internete bağlı olduğunu kontrol edin; başka siteler açılıyorsa başka bir ağ deneyin ve BT\'ye bildirin.',
+      },
+      TLS_INTERCEPTED: {
+        title: 'Ağ güvenli bağlantının arasına giriyor ya da önce oturum açmanızı istiyor.',
+        action: 'Cihazda bir tarayıcı açıp varsa Wi-Fi giriş sayfasını tamamlayın. Şirket ağındaysanız BT\'ye TLS denetimini sorun.',
+      },
+      PROXY_BLOCK: {
+        title: 'Ağdaki vekil sunucu (proxy) kullanıcı adı ve parola istiyor.',
+        action: 'OpenIDX ajanının kullanacağı proxy ayarlarını BT\'den isteyin.',
+      },
+      NETWORK_BLOCKED: {
+        title: 'Cihazın bulunduğu ağ OpenIDX\'e ulaşmasına izin vermiyor.',
+        action: 'Başka bir ağ deneyin, örneğin telefon hotspot\'u. Orada çalışıyorsa hangi ağın engellediğini BT\'ye bildirin.',
+      },
+      SERVER_ERROR: {
+        title: 'OpenIDX\'in kendisi hata veriyor.',
+        action: 'Cihazınızda bir sorun yok. Birkaç dakika bekleyip tekrar deneyin.',
+      },
+      IDENTITY_EXPIRED: {
+        title: 'Cihazın ağ kimliği yok ya da süresi dolmuş.',
+        action: 'Cihazı "Cihaz ekle" ile yeniden kaydedin.',
+      },
+      TUNNEL_NOT_INSTALLED: {
+        title: 'Güvenli tünel bileşeni cihazda kurulu değil.',
+        action: 'OpenIDX ajanını yeniden kurun ya da BT\'den tam kurulum paketini isteyin.',
+      },
+      TUNNEL_DOWN: {
+        title: 'Cihazdaki güvenli tünel çalışmıyor.',
+        action: 'Bilgisayarı yeniden başlatın. Yine çalışmazsa BT\'ye bu iletiyle birlikte bildirin.',
+      },
+      AGENT_OUTDATED: {
+        title: 'Cihazdaki OpenIDX ajanı güncel değil.',
+        action: 'Cihazı açık ve çevrimiçi bırakın; kendini günceller. Bir günden uzun sürerse BT\'ye bildirin.',
+      },
+      POSTURE_FAIL: {
+        title: 'Cihaz güvenlik gereksinimlerini karşılamıyor.',
+        action: 'Aşağıda cihazınızın altında listelenen eksikleri giderin; düzelince erişim geri gelir.',
+      },
+      NOT_ASSIGNED: {
+        title: 'Bu uygulama için size erişim verilmemiş.',
+        action: 'Erişim isteyin ya da yöneticinize veya BT\'ye sorun.',
+      },
+      STEPUP_REQUIRED: {
+        title: 'Bu uygulama kimliğinizi yeniden doğrulamanızı istiyor.',
+        action: 'Yeniden oturum açıp ek doğrulama adımını tamamlayın.',
+      },
+      SERVICE_NO_TERMINATOR: {
+        title: 'Uygulamaya şu anda OpenIDX ağından ulaşılamıyor.',
+        action: 'Sizin tarafınızda bir sorun yok. Hangi uygulamanın açılmadığını BT\'ye bildirin.',
+      },
+      POLICY_GAP: {
+        title: 'Ağ kuralları cihazınızın bu uygulamaya ulaşmasına henüz izin vermiyor.',
+        action: 'Sizin tarafınızda bir sorun yok. Hangi uygulamanın açılmadığını BT\'ye bildirin.',
+      },
+      UNKNOWN: {
+        title: 'Sorunun ne olduğunu buradan anlayamadık.',
+        action: 'Cihazda OpenIDX tepsi simgesini açıp "Neden bağlanamıyorum?"u seçin, sonra gösterdiği destek kodunu BT\'ye verin.',
+      },
+    },
+  },
   compliance: {
     noReportSince: '{{date}} tarihinden beri uyumluluk raporu yok; puan sıfır değil, bilinmiyor.',
     neverReported: 'Bu ajan hiç durum raporu göndermedi; puan sıfır değil, bilinmiyor.',

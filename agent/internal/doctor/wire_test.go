@@ -56,3 +56,46 @@ func TestBundleWireFormatV1(t *testing.T) {
 		t.Errorf("bundle wire format changed; if intended, bump SchemaVersion or update the server's copy, then run with -update.\ngot:\n%s", got)
 	}
 }
+
+// The server decodes support codes with its own copy of the decoder
+// (internal/diagnose) and checks it against this file.
+func TestSupportCodeWireFormat(t *testing.T) {
+	sets := [][]string{
+		{},
+		{CodeTunnelDown},
+		{CodeDNSFail, CodeDNSTimeout},
+		{CodeNotEnrolled},
+		{CodeTLSUntrusted, CodeClockSkew, CodeTunnelOff},
+		AllCodes,
+	}
+	got := map[string][]string{}
+	for _, set := range sets {
+		var b Bundle
+		for _, c := range set {
+			b.Checks = append(b.Checks, Check{Status: StatusFail, Code: c})
+		}
+		decoded, err := DecodeSupportCode(SupportCode(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[SupportCode(b)] = decoded
+	}
+	out, err := json.MarshalIndent(got, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = append(out, '\n')
+	const path = "testdata/support_codes.json"
+	if *updateGolden {
+		if err := os.WriteFile(path, out, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out, want) {
+		t.Errorf("support code format changed; codes already handed out would decode wrongly.\ngot:\n%s", out)
+	}
+}

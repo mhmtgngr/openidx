@@ -6511,6 +6511,73 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/my/diagnose:
+    post:
+      tags: [My Access]
+      summary: Why can't I connect? A verdict for one of my own devices
+      description: >-
+        Judges the caller's newest-reporting device, or the one named, from the
+        fleet's record of it and the newest diagnostic bundle it sent. A device
+        that is not the caller's answers 404, like one that does not exist.
+      operationId: myDiagnose
+      x-openidx-handler: internal/access.(*Service).handleMyDiagnose
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agent_id: {type: string}
+      responses:
+        '200':
+          description: The verdict
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No such device among the caller's
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/diagnose/decode:
+    post:
+      tags: [Agent Fleet]
+      summary: Read a support code a user gave over the phone (operator)
+      operationId: decodeSupportCode
+      x-openidx-handler: internal/access.(*Service).handleDecodeSupportCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string, description: 'An OX1-... code; case, spaces and dashes are forgiven'}
+      responses:
+        '200':
+          description: The doctor codes the support code names and the verdict they give
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /api/v1/access/my/resources:
     get:
       tags: [My Access]

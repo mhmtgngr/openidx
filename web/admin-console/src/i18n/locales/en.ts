@@ -470,6 +470,118 @@ const en = {
     },
   },
   // Shared compliance-score rendering (lib/compliance.ts).
+  // "Why can't I connect?" (components/why-cant-i-connect.tsx). The cause codes
+  // are the rule engine's (internal/diagnose/causes.go); a Go test there checks
+  // that every one of them has words here, in every locale.
+  diagnose: {
+    title: 'Why can\'t I connect?',
+    description: 'Check your device and see what is wrong and what to do about it.',
+    button: 'Check my device',
+    again: 'Check again',
+    checking: 'Checking…',
+    failed: 'The check could not be completed. Try again in a moment.',
+    healthy: 'No problem found.',
+    healthyHint: 'Your device is registered, reporting and allowed on the network. If one application still does not open, tell IT which one.',
+    noBundleHint: 'This answer comes from what the server knows. For a more exact one, open the OpenIDX tray icon on the device and choose "Why can\'t I connect?", or run `openidx-agent doctor` there.',
+    cause: {
+      DEVICE_REVOKED: {
+        title: 'An administrator has removed this device\'s access.',
+        action: 'Contact IT to have the device reinstated.',
+      },
+      DEVICE_SUSPENDED: {
+        title: 'This device is suspended because it did not meet the security requirements in time.',
+        action: 'Fix the items listed under your device below, then ask IT to reinstate it.',
+      },
+      DEVICE_PENDING: {
+        title: 'This device is waiting for an administrator to approve it.',
+        action: 'Nothing to do on your side; ask IT to approve the device if it is urgent.',
+      },
+      NO_DEVICE: {
+        title: 'You have no device registered with OpenIDX.',
+        action: 'Choose "Add a device" and follow the steps on the computer you want to connect.',
+      },
+      NOT_ENROLLED: {
+        title: 'The agent on this device is not registered yet.',
+        action: 'Choose "Add a device" and follow the steps on that device.',
+      },
+      AUTH_INVALID: {
+        title: 'The server no longer accepts this device\'s sign-in.',
+        action: 'Register the device again with "Add a device".',
+      },
+      SERVICE_NOT_RUNNING: {
+        title: 'The OpenIDX agent is not running on the device.',
+        action: 'Restart the computer, or ask IT to start the OpenIDX Agent service.',
+      },
+      DEVICE_OFFLINE: {
+        title: 'The device has not been in touch with OpenIDX recently.',
+        action: 'Turn the device on, check that it is online and that the OpenIDX agent is running, then check again.',
+      },
+      CLOCK_SKEW: {
+        title: 'The device\'s clock is wrong by more than five minutes.',
+        action: 'Turn on automatic date and time in the system settings.',
+      },
+      DNS_FAIL: {
+        title: 'The device cannot find the OpenIDX server on its network.',
+        action: 'Check that the device is online; if other sites work, try another network and tell IT.',
+      },
+      TLS_INTERCEPTED: {
+        title: 'The network is intercepting the secure connection, or wants you to sign in first.',
+        action: 'Open a browser on the device and complete any Wi-Fi sign-in page. On a company network, ask IT about TLS inspection.',
+      },
+      PROXY_BLOCK: {
+        title: 'The network\'s proxy asks for a user name and password.',
+        action: 'Ask IT for the proxy settings the OpenIDX agent should use.',
+      },
+      NETWORK_BLOCKED: {
+        title: 'The device\'s network does not let it reach OpenIDX.',
+        action: 'Try another network, for example a phone hotspot. If that works, tell IT which network blocked it.',
+      },
+      SERVER_ERROR: {
+        title: 'OpenIDX itself is reporting an error.',
+        action: 'Nothing is wrong with your device. Wait a few minutes and try again.',
+      },
+      IDENTITY_EXPIRED: {
+        title: 'The device\'s network identity is missing or has expired.',
+        action: 'Register the device again with "Add a device".',
+      },
+      TUNNEL_NOT_INSTALLED: {
+        title: 'The secure tunnel component is not installed on the device.',
+        action: 'Reinstall the OpenIDX agent, or ask IT for the full installer.',
+      },
+      TUNNEL_DOWN: {
+        title: 'The secure tunnel on the device is not working.',
+        action: 'Restart the computer. If it still fails, tell IT and mention this message.',
+      },
+      AGENT_OUTDATED: {
+        title: 'The OpenIDX agent on the device is out of date.',
+        action: 'Leave the device on and online; it updates itself. Tell IT if this stays for more than a day.',
+      },
+      POSTURE_FAIL: {
+        title: 'The device does not meet the security requirements.',
+        action: 'Fix the items listed under your device below; access returns once they pass.',
+      },
+      NOT_ASSIGNED: {
+        title: 'You have not been given access to this application.',
+        action: 'Request access, or ask your manager or IT.',
+      },
+      STEPUP_REQUIRED: {
+        title: 'This application asks you to confirm your identity again.',
+        action: 'Sign in again and complete the extra verification step.',
+      },
+      SERVICE_NO_TERMINATOR: {
+        title: 'The application is not reachable from the OpenIDX network right now.',
+        action: 'Nothing is wrong on your side. Tell IT which application does not open.',
+      },
+      POLICY_GAP: {
+        title: 'The network rules do not yet let your device reach this application.',
+        action: 'Nothing is wrong on your side. Tell IT which application does not open.',
+      },
+      UNKNOWN: {
+        title: 'We could not tell what is wrong from here.',
+        action: 'On the device, open the OpenIDX tray icon and choose "Why can\'t I connect?", then give IT the support code it shows.',
+      },
+    },
+  },
   compliance: {
     noReportSince: 'No compliance report since {{date}}; the score is unknown, not zero.',
     neverReported: 'This agent has never reported posture, so the score is unknown, not zero.',

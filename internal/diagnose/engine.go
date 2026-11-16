@@ -43,6 +43,9 @@ type DeviceFacts struct {
 	Outdated bool
 	// TunnelState is the last tunnel state the device reported, or "".
 	TunnelState string
+	// CredentialRefused says the server has been refusing this device's
+	// credential: it must enrol again.
+	CredentialRefused bool
 }
 
 // AccessFacts is the access decision for one resource.
@@ -156,6 +159,9 @@ func Evaluate(ev Evidence) Verdict {
 		}
 	}
 
+	if d := ev.Device; d != nil && d.CredentialRefused && d.Status != DeviceRevoked {
+		add(CauseAuthInvalid, "server")
+	}
 	if d := ev.Device; d != nil && d.Status == DeviceActive {
 		// A device that sent a fresh bundle is plainly not offline.
 		if !d.Live && bundle == nil {

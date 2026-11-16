@@ -150,6 +150,7 @@ func TestEvaluate(t *testing.T) {
 		{"step-up", Evidence{Device: active(), Access: &AccessFacts{Assigned: true, StepUpRequired: true}}, []string{CauseStepUpRequired}, false},
 		{"no terminator", Evidence{Device: active(), Access: ok, Service: &ServiceFacts{Exists: true}}, []string{CauseServiceNoTerminator}, false},
 		{"policy gap", Evidence{Device: active(), Access: ok, Service: &ServiceFacts{Exists: true, HasTerminator: true}}, []string{CausePolicyGap}, false},
+		{"refused credential", Evidence{Device: &DeviceFacts{Status: DeviceActive, CredentialRefused: true}}, []string{CauseAuthInvalid, CauseDeviceOffline}, false},
 		{"unknown doctor code is ignored, not fatal", Evidence{Device: active(), Bundle: bundle("SOMETHING_NEW")}, nil, true},
 	}
 	for _, tc := range cases {
@@ -223,5 +224,62 @@ func TestParseBundleBoundsWhatADeviceSends(t *testing.T) {
 	b, err := ParseBundle(long)
 	if err != nil || len([]rune(b.Checks[0].Detail)) != maxText {
 		t.Errorf("device text was not clipped: %v", err)
+	}
+}
+
+// The agent writes this file from its own encoder; every code in it must
+// decode here to the same list.
+func TestSupportCodesFromTheAgentDecode(t *testing.T) {
+	raw, err := os.ReadFile("../../agent/internal/doctor/testdata/support_codes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var golden map[string][]string
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatal(err)
+	}
+	if len(golden) < 4 {
+		t.Fatalf("only %d golden support codes", len(golden))
+	}
+	for code, want := range golden {
+		got, err := DecodeSupportCode(code)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s decodes to %v (%v), the agent meant %v", code, got, err, want)
+		}
+		if got, err := DecodeSupportCode(strings.ToLower(strings.ReplaceAll(code, "-", " "))); err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s as spoken: %v (%v)", code, got, err)
+		}
+	}
+	for _, bad := range []string{"", "hello", "OX1-", "OX1-0000", strings.Repeat("A", 500)} {
+		if _, err := DecodeSupportCode(bad); !errors.Is(err, ErrSupportCode) {
+			t.Errorf("%q: err = %v", bad, err)
+		}
+	}
+	v := Evaluate(Evidence{Bundle: BundleFromCodes([]string{"TUNNEL_DOWN"}), Device: &DeviceFacts{Status: DeviceActive}})
+	if v.Primary() != CauseTunnelDown {
+		t.Errorf("verdict from a support code = %+v", v)
+	}
+}
+
+// Every cause has words in every console locale. The console falls back to
+// UNKNOWN for a code it has no words for, so a missing one would not break a
+// page; it would tell someone "we could not tell" when the server could.
+func TestEveryCauseHasWordsInTheConsole(t *testing.T) {
+	for _, locale := range []string{"en", "tr"} {
+		src, err := os.ReadFile("../../web/admin-console/src/i18n/locales/" + locale + ".ts")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, after, found := strings.Cut(string(src), "  diagnose: {")
+		if !found {
+			t.Fatalf("%s has no diagnose block", locale)
+		}
+		block, _, _ := strings.Cut(after, "\n  },\n")
+		for _, code := range AllCauses() {
+			entry := regexp.MustCompile(`(?s)\n      ` + code + `: \{\s+title: '.+?',\s+action: '.+?',\s+\},`)
+			if !entry.MatchString(block) {
+				t.Errorf("%s.ts has no title and action for %s", locale, code)
+			}
+		}
 	}
 }
