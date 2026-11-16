@@ -268,6 +268,18 @@ when the tunnel is not connected, the reason first.
 
 ## Troubleshooting
 
+- **Start with `openidx-agent doctor`.** It checks, on the device alone and
+  without the server's help, the agent's setup, the path to the server (name
+  lookup, connection, TLS, proxy, clock), the device's Ziti identity, the agent
+  service and the tunnel, and says in English or Turkish (`--lang en|tr`) what
+  is wrong and what to do. `--fix` applies the repairs that are safe to repeat
+  (clear the name lookup cache, restart the agent service; the second needs
+  administrator / root) and checks again. `--json` prints the diagnostic
+  bundle and `--export <new file>` saves it to hand to IT; the bundle holds no
+  token, key or proxy password. Exit status: 0 no problem, 1 a problem found,
+  2 the check itself failed. An ordinary user on Linux cannot read the agent's
+  settings, and there the tunnel's state is not visible to the command yet:
+  run it as root for the full picture.
 - **Logs.** The agent logs every state change with its reason (logger
   `tunnel`). In `child` mode the tunneler's own output goes to
   `<config dir>/tunnel/ziti-edge-tunnel.log`, moved to `.log.1` at 10 MB. In
