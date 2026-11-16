@@ -679,6 +679,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// (my_diagnose.go).
 		api.POST("/my/diagnose", svc.handleMyDiagnose)
 		api.POST("/diagnose/decode", operatorTier, svc.handleDecodeSupportCode)
+		api.GET("/agentic/settings", operatorTier, svc.handleGetAgenticSettings)
+		api.PUT("/agentic/settings", adminOnly, svc.handlePutAgenticSettings)
+		api.GET("/agentic/actions", operatorTier, svc.handleListAgenticActions)
 
 		// Self-service: "My Network" — what the caller can reach, in plain
 		// language (no overlay vocabulary). Deliberately not adminOnly.

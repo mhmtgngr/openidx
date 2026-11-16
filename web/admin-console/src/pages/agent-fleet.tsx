@@ -30,6 +30,7 @@ import { QueryError } from '../components/query-error'
 import { AgentChecksSection } from '../components/agent-checks-section'
 import { FleetTokensSection } from '../components/fleet-tokens-section'
 import { AgentUpdatesSection, updateStateLabel } from '../components/agent-updates-section'
+import { AgenticSettingsSection } from '../components/agentic-settings-section'
 import { AgentCommandsDialog } from '../components/agent-commands-dialog'
 import { TunnelPolicyBadge, TunnelStatusBadge, type TunnelStatus } from '../components/tunnel-status-badge'
 import { api } from '../lib/api'
@@ -472,6 +473,8 @@ export function AgentFleetPage() {
 
       {/* Fleet enrollment tokens and the one-time Deploy panel. */}
       <FleetTokensSection />
+
+      <AgenticSettingsSection />
 
       {/* What the enrolled agents are told to check. */}
       <AgentChecksSection />

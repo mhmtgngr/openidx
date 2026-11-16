@@ -8483,6 +8483,27 @@ const tr: typeof en = {
       },
     },
     agentFleet: {
+      agentic: {
+        title: 'Otomatik düzeltmeler',
+        description: 'Bir cihaz sorun bildirdiğinde OpenIDX\'in onu kendi başına ne kadar düzeltebileceği. Düzeltmeler yalnızca ajanı yeniden başlatır veya günceller; cihazın neye ulaşabileceğini asla değiştirmez.',
+        mode: 'Kip',
+        modes: {
+          off: 'Kapalı — hiçbir şey yapma',
+          observe: 'Gözlem — yapılacakları kaydet',
+          tier0: 'Kademe 0 — ajanı yeniden başlat, günlükleri topla',
+          tier1: 'Kademe 1 — ajanı güncelle de',
+        },
+        capped: 'Bu kurulum otomasyonu "{{mode}}" ile sınırlıyor.',
+        killSwitch: 'Tüm otomatik düzeltmeleri hemen durdur',
+        killOn: 'Acil durdurma AÇIK — hiçbir şey uygulanmaz.',
+        saved: 'Kaydedildi',
+        saveFailed: 'Ayar kaydedilemedi',
+        recent: 'Son otomatik işlemler',
+        none: 'Henüz yok.',
+        outcome: { observed: 'yapılacaktı', applied: 'uygulandı', suppressed: 'tutuldu' },
+        reason: { observe_mode: 'gözlem kipi', mode_below_fix: 'kip yetersiz', anti_flap: 'bugün iki kez denendi', kill_switch: 'acil durdurma', queue_busy: 'cihaz meşgul' },
+        action: { restart_tunnel: 'ajanı yeniden başlat', collect_logs: 'günlükleri topla', update_agent: 'ajanı güncelle' },
+      },
       tokens: {
         heading: 'Filo kayıt anahtarları',
         intro: 'MDM, GPO veya betiğin ajanı kurarken kullandığı yeniden kullanılabilir anahtarlar. Her biri kullanımını sayar, sınırında durur ve kaydettiği cihazları etiketler.',

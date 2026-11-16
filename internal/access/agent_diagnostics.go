@@ -78,6 +78,7 @@ func (h *AgentAPIHandler) HandleAgentDiagnostics(c *gin.Context) {
 	}
 	h.logAuditEvent("agent.diagnostic.uploaded", agentID, outcome, "diagnostic="+id)
 	h.logAuditEventToDB(ctx, "agent.diagnostic.uploaded", agentID, outcome, "diagnostic="+id)
+	h.runAutoFixes(ctx, agentID, id, verdict)
 	c.JSON(http.StatusOK, gin.H{"id": id, "verdict": verdict})
 }
 
@@ -152,6 +153,7 @@ func (h *AgentAPIHandler) fileDiagnoseResult(ctx context.Context, agentID string
 	}
 	h.logAuditEvent("agent.diagnostic.uploaded", agentID, outcome, "diagnostic="+id+" source=command")
 	h.logAuditEventToDB(ctx, "agent.diagnostic.uploaded", agentID, outcome, "diagnostic="+id+" source=command")
+	h.runAutoFixes(ctx, agentID, id, verdict)
 }
 
 // expireAgentDiagnostics removes bundles past their retention.

@@ -428,6 +428,12 @@ type Config struct {
 	// approving something else.
 	AccessRequestMaxDurationHours int `mapstructure:"access_request_max_duration_hours"`
 
+	// AgenticMode caps how far the platform may act on its own for every
+	// organization: off, observe, tier0 or tier1. Empty means no cap; an
+	// organization's own setting then decides (default observe). It can only
+	// lower an organization's mode, never raise it.
+	AgenticMode string `mapstructure:"agentic_mode"`
+
 	// SelfHealStateDir is where the self-heal loop writes its runtime state
 	// (latest.json, ledger.jsonl, actions.jsonl, MODE, DISABLE, flap). The
 	// admin-console control panel reads these and writes MODE/DISABLE.
@@ -1547,6 +1553,7 @@ func bindEnvVars(v *viper.Viper) {
 		"agent_enrollment_quota_per_hour":     "AGENT_ENROLLMENT_QUOTA_PER_HOUR",
 		"agent_downloads_dir":                 "AGENT_DOWNLOADS_DIR",
 		"access_request_max_duration_hours":   "ACCESS_REQUEST_MAX_DURATION_HOURS",
+		"agentic_mode":                        "AGENTIC_MODE",
 		"selfheal_state_dir":                  "SELFHEAL_STATE_DIR",
 		"selfheal_scripts_dir":                "SELFHEAL_SCRIPTS_DIR",
 		"pam_session_risk_gate":               "PAM_SESSION_RISK_GATE",

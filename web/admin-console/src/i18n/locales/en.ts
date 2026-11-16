@@ -8575,6 +8575,27 @@ const en = {
     // severities and enforcement actions, and the `device-trusted` Ziti role
     // attribute the tier badge names.
     agentFleet: {
+      agentic: {
+        title: 'Automatic fixes',
+        description: 'How far OpenIDX may fix a device on its own when the device reports a problem. Fixes only restart or update the agent; they never change what a device may reach.',
+        mode: 'Mode',
+        modes: {
+          off: 'Off — do nothing',
+          observe: 'Observe — record what would be done',
+          tier0: 'Tier 0 — restart the agent, collect logs',
+          tier1: 'Tier 1 — also update the agent',
+        },
+        capped: 'This deployment limits automation to "{{mode}}".',
+        killSwitch: 'Stop all automatic fixes now',
+        killOn: 'Kill switch is ON — nothing is applied.',
+        saved: 'Saved',
+        saveFailed: 'Could not save the setting',
+        recent: 'Recent automatic actions',
+        none: 'Nothing yet.',
+        outcome: { observed: 'would do', applied: 'applied', suppressed: 'held back' },
+        reason: { observe_mode: 'observe mode', mode_below_fix: 'mode too low', anti_flap: 'tried twice today', kill_switch: 'kill switch', queue_busy: 'device is busy' },
+        action: { restart_tunnel: 'restart the agent', collect_logs: 'collect logs', update_agent: 'update the agent' },
+      },
       tokens: {
         heading: 'Fleet enrollment tokens',
         intro: 'Reusable tokens an MDM, GPO or script installs the agent with. Each counts its uses, stops at its limit and tags the devices it enrols.',
