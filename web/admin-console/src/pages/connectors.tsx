@@ -9,6 +9,7 @@ import { Label } from '../components/ui/label'
 import { Badge } from '../components/ui/badge'
 import { Switch } from '../components/ui/switch'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
+import { QueryError } from '../components/query-error'
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '../components/ui/dialog'
@@ -66,7 +67,7 @@ export function ConnectorsPage() {
   const { data: sites } = useSites()
   const [wizardOpen, setWizardOpen] = useState(false)
 
-  const { data: routersData, isLoading } = useQuery({
+  const { data: routersData, isLoading, isError, error } = useQuery({
     queryKey: ['ziti-fabric-routers'],
     queryFn: () => api.get<FabricRouter[]>('/api/v1/access/ziti/fabric/routers'),
     refetchInterval: 15000,
@@ -122,6 +123,8 @@ export function ConnectorsPage() {
 
       {isLoading ? (
         <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
+      ) : isError ? (
+        <QueryError error={error} resource={t('pages.connectors.title')} />
       ) : routers.length === 0 ? (
         <Card>
           <CardContent className="py-10 text-center space-y-3">
