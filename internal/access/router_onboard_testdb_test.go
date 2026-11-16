@@ -131,7 +131,8 @@ func TestRouterOnboardingIntoASite(t *testing.T) {
 	}
 
 	for _, bad := range []string{
-		`{"site_slug":"azure"}`,
+		// advertised_address omitted is now VALID (a private, outbound-only
+		// connector), so it is no longer in this list.
 		`{"site_slug":"nowhere","advertised_address":"192.0.2.4"}`,
 		`{"site_slug":"azure","advertised_address":"192.0.2.4:3022"}`,
 		`{"site_slug":"azure","advertised_address":"192.0.2.4","image_tag":"1.6; rm -rf /"}`,

@@ -1344,6 +1344,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 	// The box's agent update mirror (agent_mirror.go): latest.json, re-signed
 	// with the box URL, and the MSI it names, per channel.
 	router.GET("/downloads/agent/:channel/:file", svc.handleAgentMirror)
+	// Connector installer script (connector_install.go): fetched by curl|bash
+	// from a host that has no credentials yet, so public like the agent
+	// downloads. Registered under /api/v1/access/ (not /downloads/:file, which
+	// would be a gin param-vs-static conflict) so the one-liner works through
+	// the edge's /api/v1/access route in private mode too.
+	router.GET("/api/v1/access/downloads/connector/install.sh", svc.handleConnectorInstallScript)
 
 	// A retired temporary access link: the page says how access works now.
 	router.GET("/temp-access/:token", svc.handleRetiredTempAccess)
