@@ -1840,5 +1840,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agenticSettingsUp,
 			DownSQL:     agenticSettingsDown,
 		},
+		{
+			Version:     260,
+			Name:        "agentic_provider",
+			Description: "Which model an organization's assistant uses. org_agentic_settings gains provider (none by default, anthropic, or openai_compat for a model the organization runs), model, base URL, masking level, the API key (encrypted), whether tools are used, and who consented to a cloud model and when. A CHECK holds that anthropic needs a recorded consent and masking above off.",
+			UpSQL:       agenticProviderUp,
+			DownSQL:     agenticProviderDown,
+		},
 	}
 }

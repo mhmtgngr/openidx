@@ -31,6 +31,10 @@ const (
 	BlockText       BlockType = "text"
 	BlockToolUse    BlockType = "tool_use"
 	BlockToolResult BlockType = "tool_result"
+	// BlockOpaque is a block only the provider that wrote it understands (a
+	// model's reasoning, say). The loop keeps it and a provider replays it
+	// unchanged; nothing else reads it.
+	BlockOpaque BlockType = "opaque"
 )
 
 // Block is one piece of a message: text, a request to call a tool, or a
@@ -43,6 +47,8 @@ type Block struct {
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+	// Raw is a BlockOpaque's provider-specific content.
+	Raw json.RawMessage `json:"raw,omitempty"`
 }
 
 // Message is one turn.

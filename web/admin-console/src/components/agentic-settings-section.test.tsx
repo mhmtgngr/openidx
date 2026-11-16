@@ -22,6 +22,8 @@ function setup(settings: object, actions: object[] = []) {
   )
 }
 
+const base = { kill_switch: false, effective_mode: 'observe', provider: 'none', model: '', base_url: '', redaction: 'mask', has_api_key: false }
+
 describe('AgenticSettingsSection', () => {
   beforeEach(() => {
     get.mockReset()
@@ -30,7 +32,7 @@ describe('AgenticSettingsSection', () => {
 
   it('shows the mode, the cap and what was done', async () => {
     setup(
-      { mode: 'tier1', kill_switch: false, effective_mode: 'observe' },
+      { ...base, mode: 'tier1', effective_mode: 'observe' },
       [{ id: '1', agent_id: 'pc-1', action: 'restart_tunnel', cause: 'TUNNEL_DOWN', outcome: 'observed', reason: 'observe_mode', created_at: '2026-11-16T12:00:00Z' }],
     )
     expect(await screen.findByLabelText('Mode')).toHaveValue('tier1')
@@ -40,10 +42,26 @@ describe('AgenticSettingsSection', () => {
   })
 
   it('sends only what changed', async () => {
-    setup({ mode: 'observe', kill_switch: false, effective_mode: 'observe' })
-    put.mockResolvedValue({ mode: 'observe', kill_switch: true, effective_mode: 'observe' } as never)
+    setup({ ...base, mode: 'observe' })
+    put.mockResolvedValue({ ...base, mode: 'observe', kill_switch: true } as never)
     await userEvent.click(await screen.findByLabelText('Stop all automatic fixes now'))
     await waitFor(() => expect(put).toHaveBeenCalledWith('/api/v1/access/agentic/settings', { kill_switch: true }))
     expect(await screen.findByRole('status')).toHaveTextContent('Kill switch is ON')
+  })
+
+  it('asks for consent before a cloud model and sends the key once', async () => {
+    setup({ ...base, mode: 'observe' })
+    put.mockResolvedValue({ ...base, mode: 'observe', provider: 'anthropic', has_api_key: true } as never)
+    const user = userEvent.setup()
+    await user.selectOptions(await screen.findByLabelText('Model'), 'anthropic')
+    const save = screen.getByRole('button', { name: 'Save assistant settings' })
+    expect(save).toBeDisabled()
+    expect(screen.queryByRole('option', { name: 'Off' })).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText('API key'), 'sk-ant-xyz')
+    await user.click(screen.getByRole('checkbox', { name: /masked conversation text/ }))
+    await user.click(save)
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/api/v1/access/agentic/settings', expect.objectContaining({
+      provider: 'anthropic', api_key: 'sk-ant-xyz', cloud_consent: true, redaction: 'mask',
+    })))
   })
 })

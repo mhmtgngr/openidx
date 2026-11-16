@@ -135,7 +135,7 @@ func TestAgenticModeIsCappedByTheDeploymentAndValidated(t *testing.T) {
 	if applied != 0 {
 		t.Errorf("%d fixes were applied under an observe cap", applied)
 	}
-	for _, bad := range []map[string]any{{"mode": "root"}, {}} {
+	for _, bad := range []map[string]any{{"mode": "root"}} {
 		if code, _ := c.putSettings(bad); code != http.StatusBadRequest {
 			t.Errorf("%v answered %d, want 400", bad, code)
 		}
@@ -156,5 +156,66 @@ func TestAgenticSettingsAreOrgScoped(t *testing.T) {
 	set, err := loadAgenticSettings(orgctx.With(c.ctx, orgctx.Org{ID: c.orgID}), c.h.db, c.orgID, "")
 	if err != nil || set.Mode != modeTier0 {
 		t.Errorf("own settings = %+v, %v", set, err)
+	}
+}
+
+func TestAssistantProviderSettings(t *testing.T) {
+	c, _, query := newContinuityHarness(t, "agentic-provider-org")
+	put := c.putSettings
+
+	// A cloud model needs the organization's explicit say-so, a key and masking.
+	for name, body := range map[string]map[string]any{
+		"no consent":                       {"provider": "anthropic", "api_key": "sk-ant-secret-1"},
+		"masking off":                      {"provider": "anthropic", "api_key": "sk-ant-secret-1", "cloud_consent": true, "redaction": "off"},
+		"no key anywhere":                  {"provider": "anthropic", "cloud_consent": true},
+		"a local model without an address": {"provider": "openai_compat", "model": "llama3.1"},
+		"an unknown provider":              {"provider": "gpt"},
+		"a file address":                   {"provider": "openai_compat", "model": "m", "base_url": "file:///etc/passwd"},
+	} {
+		if code, out := put(body); code != http.StatusBadRequest {
+			t.Errorf("%s answered %d: %v", name, code, out)
+		}
+	}
+	var n int
+	query([]any{&n}, `SELECT COUNT(*) FROM org_agentic_settings`)
+	if n != 0 {
+		t.Errorf("%d refused changes were stored", n)
+	}
+
+	code, out := put(map[string]any{"provider": "anthropic", "api_key": "sk-ant-secret-1", "cloud_consent": true})
+	if code != http.StatusOK || out["provider"] != "anthropic" || out["has_api_key"] != true || out["cloud_consent_at"] == nil {
+		t.Fatalf("anthropic: %d %v", code, out)
+	}
+	if raw, _ := json.Marshal(out); bytes.Contains(raw, []byte("sk-ant-secret-1")) {
+		t.Error("the API key was returned")
+	}
+	var stored, by string
+	query([]any{&stored}, `SELECT api_key_enc FROM org_agentic_settings WHERE org_id = $1::uuid`, c.orgID)
+	query([]any{&by}, `SELECT COALESCE(cloud_consent_by::text, '') FROM org_agentic_settings WHERE org_id = $1::uuid`, c.orgID)
+	if stored == "" || by != c.admin {
+		t.Errorf("stored key %q, consent by %q (want the admin %q)", stored, by, c.admin)
+	}
+
+	// The key opens into a working provider; changing only the model keeps
+	// the consent and the key.
+	set, err := loadAgenticSettings(orgctx.With(c.ctx, orgctx.Org{ID: c.orgID}), c.h.db, c.orgID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{db: c.h.db, logger: zap.NewNop()}
+	if p, err := svc.agenticProvider(set); err != nil || !p.Capabilities().ToolCalls {
+		t.Errorf("provider from stored settings: %v", err)
+	}
+	if code, out := put(map[string]any{"model": "claude-opus-5-5"}); code != http.StatusOK || out["has_api_key"] != true || out["cloud_consent_at"] == nil {
+		t.Errorf("model change: %d %v", code, out)
+	}
+
+	// Moving to a model of their own drops the cloud consent; coming back
+	// asks again.
+	if code, out := put(map[string]any{"provider": "openai_compat", "model": "llama3.1", "base_url": "http://ollama.internal:11434/v1", "redaction": "off"}); code != http.StatusOK || out["cloud_consent_at"] != nil {
+		t.Errorf("local model: %d %v", code, out)
+	}
+	if code, _ := put(map[string]any{"provider": "anthropic"}); code != http.StatusBadRequest {
+		t.Errorf("returning to the cloud without consent answered %d", code)
 	}
 }

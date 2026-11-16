@@ -6598,6 +6598,13 @@ paths:
                   kill_switch: {type: boolean}
                   effective_mode: {type: string, enum: [off, observe, tier0, tier1]}
                   updated_at: {type: string, format: date-time}
+                  provider: {type: string, enum: [none, anthropic, openai_compat]}
+                  model: {type: string}
+                  base_url: {type: string}
+                  redaction: {type: string, enum: [off, mask, strict]}
+                  tools_enabled: {type: boolean}
+                  has_api_key: {type: boolean}
+                  cloud_consent_at: {type: string, format: date-time}
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -6616,6 +6623,13 @@ paths:
               properties:
                 mode: {type: string, enum: [off, observe, tier0, tier1]}
                 kill_switch: {type: boolean}
+                provider: {type: string, enum: [none, anthropic, openai_compat], description: 'Which model the assistant uses; none answers from the rule engine alone'}
+                model: {type: string}
+                base_url: {type: string, description: 'OpenAI-compatible endpoint of a model the organization runs, e.g. http://ollama.internal:11434/v1'}
+                redaction: {type: string, enum: [off, mask, strict], description: 'Masking applied to what the model is shown; never off for anthropic'}
+                tools_enabled: {type: boolean}
+                api_key: {type: string, description: 'Write-only; empty removes the stored key'}
+                cloud_consent: {type: boolean, description: 'Required to choose anthropic: masked conversation text is sent to Anthropic'}
       responses:
         '200':
           description: The settings as saved

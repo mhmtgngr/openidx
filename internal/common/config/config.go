@@ -433,6 +433,10 @@ type Config struct {
 	// organization's own setting then decides (default observe). It can only
 	// lower an organization's mode, never raise it.
 	AgenticMode string `mapstructure:"agentic_mode"`
+	// AnthropicAPIKey is the Claude API key an organization's assistant uses
+	// when the organization has not stored its own. Empty means each
+	// organization brings its own key or runs a model of its own.
+	AnthropicAPIKey string `mapstructure:"anthropic_api_key"`
 
 	// SelfHealStateDir is where the self-heal loop writes its runtime state
 	// (latest.json, ledger.jsonl, actions.jsonl, MODE, DISABLE, flap). The
@@ -1554,6 +1558,7 @@ func bindEnvVars(v *viper.Viper) {
 		"agent_downloads_dir":                 "AGENT_DOWNLOADS_DIR",
 		"access_request_max_duration_hours":   "ACCESS_REQUEST_MAX_DURATION_HOURS",
 		"agentic_mode":                        "AGENTIC_MODE",
+		"anthropic_api_key":                   "ANTHROPIC_API_KEY",
 		"selfheal_state_dir":                  "SELFHEAL_STATE_DIR",
 		"selfheal_scripts_dir":                "SELFHEAL_SCRIPTS_DIR",
 		"pam_session_risk_gate":               "PAM_SESSION_RISK_GATE",
