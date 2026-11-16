@@ -123,6 +123,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("POST /enroll", s.handleEnroll)
 	mux.HandleFunc("GET /posture", s.handlePosture)
+	mux.HandleFunc("GET /doctor", s.handleDoctor)
+	mux.HandleFunc("POST /doctor/repair", s.handleDoctorRepair)
 	mux.HandleFunc("GET /device-state", s.handleDeviceState)
 	mux.HandleFunc("GET /token", s.handleToken)
 	mux.HandleFunc("GET /pam/entries", s.handlePamList)

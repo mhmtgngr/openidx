@@ -17,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/agent/internal/agent"
 	"github.com/openidx/openidx/agent/internal/doctor"
+	"github.com/openidx/openidx/agent/internal/doctor/collect"
 	"github.com/openidx/openidx/agent/internal/ipc"
 	"github.com/openidx/openidx/agent/internal/tunnel"
 )
@@ -62,43 +63,21 @@ func pipe(state tunnel.State) func() (*ipc.Status, error) {
 	}
 }
 
-func testDeps(out *bytes.Buffer) doctorDeps {
-	return doctorDeps{
-		loadConfig: enrolledConfig, queryIPC: pipe(tunnel.StateConnected),
-		probes: okProbes{}, actions: stubActions{}, stdout: out,
-	}
-}
-
-func TestGatherInputsFromConfig(t *testing.T) {
-	in := gatherInputs(testDeps(&bytes.Buffer{}), "")
-	if !in.Enrolled || in.AgentID != "agent-1" || !in.TunnelExpected || in.ConfigErr != nil {
-		t.Errorf("inputs = %+v", in)
-	}
-	if in.ServiceRunning == nil || !*in.ServiceRunning || in.Tunnel == nil {
-		t.Errorf("status pipe not used: %+v", in)
-	}
-}
-
-// Review focus 2: an ordinary user cannot read agent.json.
-func TestGatherInputsFallsBackToPipeWhenConfigUnreadable(t *testing.T) {
-	d := testDeps(&bytes.Buffer{})
-	d.loadConfig = func(string) (*agent.AgentConfig, error) {
-		return nil, fmt.Errorf("reading agent config: %w", fs.ErrPermission)
-	}
-	in := gatherInputs(d, "")
-	if !in.Enrolled || in.ServerURL == "" || in.ConfigErr != nil {
-		t.Errorf("inputs = %+v", in)
+func testDeps() collect.Deps {
+	return collect.Deps{
+		LoadConfig: enrolledConfig, QueryIPC: pipe(tunnel.StateConnected),
+		Probes: okProbes{}, Actions: stubActions{},
 	}
 }
 
 func TestConfigUnreadableWithoutPipe(t *testing.T) {
 	var out bytes.Buffer
-	d := testDeps(&out)
-	d.loadConfig = func(string) (*agent.AgentConfig, error) {
+	d := testDeps()
+	d.LoadConfig = func(string) (*agent.AgentConfig, error) {
 		return nil, fmt.Errorf("reading agent config: %w", fs.ErrPermission)
 	}
-	d.queryIPC = func() (*ipc.Status, error) { return nil, errors.New("no pipe") }
-	code, err := runDoctor(context.Background(), d, "", doctorFlags{JSON: true})
+	d.QueryIPC = func() (*ipc.Status, error) { return nil, errors.New("no pipe") }
+	code, err := runDoctor(context.Background(), d, &out, "", doctorFlags{JSON: true})
 	if err != nil || code != 1 {
 		t.Fatalf("code %d, err %v", code, err)
 	}
@@ -107,22 +86,9 @@ func TestConfigUnreadableWithoutPipe(t *testing.T) {
 	}
 }
 
-func TestServiceStateWithoutPipe(t *testing.T) {
-	d := testDeps(&bytes.Buffer{})
-	d.queryIPC = func() (*ipc.Status, error) { return nil, errors.New("no pipe") }
-	in := gatherInputs(d, "")
-	if runtime.GOOS == "windows" {
-		if in.ServiceRunning == nil || *in.ServiceRunning {
-			t.Error("a silent pipe on Windows means the service is down")
-		}
-	} else if in.ServiceRunning != nil {
-		t.Error("without a pipe the service state is unknown, not down")
-	}
-}
-
 func TestRunDoctorHealthyJSON(t *testing.T) {
 	var out bytes.Buffer
-	code, err := runDoctor(context.Background(), testDeps(&out), "", doctorFlags{JSON: true})
+	code, err := runDoctor(context.Background(), testDeps(), &out, "", doctorFlags{JSON: true})
 	if err != nil || code != 0 {
 		t.Fatalf("code %d, err %v\n%s", code, err, out.String())
 	}
@@ -140,9 +106,9 @@ func TestRunDoctorHealthyJSON(t *testing.T) {
 
 func TestRunDoctorFailingTextAndPlan(t *testing.T) {
 	var out bytes.Buffer
-	d := testDeps(&out)
-	d.queryIPC = pipe(tunnel.StateDegraded)
-	code, err := runDoctor(context.Background(), d, "", doctorFlags{Lang: "tr"})
+	d := testDeps()
+	d.QueryIPC = pipe(tunnel.StateDegraded)
+	code, err := runDoctor(context.Background(), d, &out, "", doctorFlags{Lang: "tr"})
 	if err != nil || code != 1 {
 		t.Fatalf("code %d, err %v", code, err)
 	}
@@ -155,12 +121,12 @@ func TestRunDoctorFailingTextAndPlan(t *testing.T) {
 
 func TestRunDoctorFixReRunsChecks(t *testing.T) {
 	var out bytes.Buffer
-	d := testDeps(&out)
+	d := testDeps()
 	state := tunnel.StateDegraded
-	d.queryIPC = func() (*ipc.Status, error) { return pipe(state)() }
-	d.actions = stubActions{onRestart: func() { state = tunnel.StateConnected }}
+	d.QueryIPC = func() (*ipc.Status, error) { return pipe(state)() }
+	d.Actions = stubActions{onRestart: func() { state = tunnel.StateConnected }}
 
-	code, err := runDoctor(context.Background(), d, "", doctorFlags{JSON: true, Fix: true})
+	code, err := runDoctor(context.Background(), d, &out, "", doctorFlags{JSON: true, Fix: true})
 	if err != nil || code != 0 {
 		t.Fatalf("code %d, err %v\n%s", code, err, out.String())
 	}
@@ -174,7 +140,8 @@ func TestRunDoctorFixReRunsChecks(t *testing.T) {
 }
 
 func TestRunDoctorRejectsUnknownLanguage(t *testing.T) {
-	if code, err := runDoctor(context.Background(), testDeps(&bytes.Buffer{}), "", doctorFlags{Lang: "de"}); code != 2 || err == nil {
+	var out bytes.Buffer
+	if code, err := runDoctor(context.Background(), testDeps(), &out, "", doctorFlags{Lang: "de"}); code != 2 || err == nil {
 		t.Errorf("code %d, err %v", code, err)
 	}
 }
@@ -182,7 +149,7 @@ func TestRunDoctorRejectsUnknownLanguage(t *testing.T) {
 func TestExportWritesOwnerOnlyAndNeverOverwrites(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bundle.json")
 	var out bytes.Buffer
-	if code, err := runDoctor(context.Background(), testDeps(&out), "", doctorFlags{Export: path}); code != 0 || err != nil {
+	if code, err := runDoctor(context.Background(), testDeps(), &out, "", doctorFlags{Export: path}); code != 0 || err != nil {
 		t.Fatalf("code %d, err %v", code, err)
 	}
 	data, err := os.ReadFile(path)
@@ -198,7 +165,7 @@ func TestExportWritesOwnerOnlyAndNeverOverwrites(t *testing.T) {
 			t.Errorf("mode = %v, want 0600", st.Mode().Perm())
 		}
 	}
-	if code, err := runDoctor(context.Background(), testDeps(&out), "", doctorFlags{Export: path}); code != 2 || err == nil {
+	if code, err := runDoctor(context.Background(), testDeps(), &out, "", doctorFlags{Export: path}); code != 2 || err == nil {
 		t.Errorf("second export: code %d, err %v; an existing file must be refused", code, err)
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(after, data) {

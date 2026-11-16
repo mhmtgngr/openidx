@@ -158,6 +158,8 @@ func (a *app) onReady() {
 		a.tunnelSlot = append(a.tunnelSlot, mi)
 	}
 	a.mNetwork.Hide()
+	mDiagnose := systray.AddMenuItem(T.Diagnose, T.DiagnoseTip)
+	go a.watchDiagnose(mDiagnose)
 	mSettings := systray.AddMenuItem(T.Settings, "")
 	a.mAutostart = mSettings.AddSubMenuItemCheckbox(T.Autostart, T.AutostartTip, !AutostartDisabled())
 	mUpdates := mSettings.AddSubMenuItem(T.Updates, T.UpdatesTip)

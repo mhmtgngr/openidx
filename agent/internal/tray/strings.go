@@ -21,6 +21,7 @@ type strs struct {
 	Health, HealthTip, HealthOK, HealthPrefix string
 
 	Network, NetworkTip                           string
+	Diagnose, DiagnoseTip, DiagnoseRunning        string
 	NetConnected, NetConnecting, NetOff, NetError string
 	NetServiceOne, NetServicesN, NetMore          string
 	NetOffHint, NetNotInstalled                   string
@@ -58,6 +59,7 @@ var enStrings = strs{
 	HealthOK: "Device health: all checks pass", HealthPrefix: "Device health: ",
 
 	Network: "Network", NetworkTip: "The OpenIDX network tunnel",
+	Diagnose: "Why can't I connect?", DiagnoseTip: "Check this device and say what is wrong", DiagnoseRunning: "Checking…",
 	NetConnected: "Connected", NetConnecting: "Connecting", NetOff: "Off", NetError: "Error",
 	NetServiceOne: "1 service", NetServicesN: "%d services", NetMore: "…and %d more",
 	NetOffHint:      "Off by policy. Your IT team turns it on for this device.",
@@ -109,6 +111,7 @@ var trStrings = strs{
 	HealthOK: "Cihaz sağlığı: tüm denetimler geçti", HealthPrefix: "Cihaz sağlığı: ",
 
 	Network: "Ağ", NetworkTip: "OpenIDX ağ tüneli",
+	Diagnose: "Neden bağlanamıyorum?", DiagnoseTip: "Bu cihazı denetle ve sorunu söyle", DiagnoseRunning: "Denetleniyor…",
 	NetConnected: "Bağlı", NetConnecting: "Bağlanıyor", NetOff: "Kapalı", NetError: "Hata",
 	NetServiceOne: "1 hizmet", NetServicesN: "%d hizmet", NetMore: "…ve %d tane daha",
 	NetOffHint:      "İlke gereği kapalı. Bu cihaz için BT ekibiniz açar.",

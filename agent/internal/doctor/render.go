@@ -37,5 +37,7 @@ func Render(w io.Writer, b Bundle, l Lang) {
 	}
 	if b.Healthy() {
 		fmt.Fprintln(w, t.healthy)
+		return
 	}
+	fmt.Fprintf(w, "\n%s: %s\n", t.support, SupportCode(b))
 }

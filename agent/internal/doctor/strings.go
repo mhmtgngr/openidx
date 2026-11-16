@@ -30,11 +30,11 @@ type Message struct {
 }
 
 type ui struct {
-	heading, healthy, problem, action, note, repair, skipped string
-	checks                                                   map[string]string
-	outcomes                                                 map[string]string
-	repairs                                                  map[string]string
-	codes                                                    map[string]Message
+	heading, healthy, problem, action, note, repair, skipped, support string
+	checks                                                            map[string]string
+	outcomes                                                          map[string]string
+	repairs                                                           map[string]string
+	codes                                                             map[string]Message
 }
 
 const fixHint = "openidx-agent doctor --fix"
@@ -48,6 +48,7 @@ var tables = map[Lang]*ui{
 		note:    "Note",
 		repair:  "Repair",
 		skipped: "skipped",
+		support: "Support code (read this to IT)",
 		checks: map[string]string{
 			CheckConfig: "Agent setup", CheckCredentials: "Device sign-in", CheckDNS: "Name lookup",
 			CheckTCP: "Connection to server", CheckTLS: "Secure connection", CheckHTTP: "Server answer",
@@ -96,6 +97,7 @@ var tables = map[Lang]*ui{
 		note:    "Not",
 		repair:  "Onarım",
 		skipped: "atlandı",
+		support: "Destek kodu (BT'ye bunu okuyun)",
 		checks: map[string]string{
 			CheckConfig: "Ajan kurulumu", CheckCredentials: "Cihaz oturumu", CheckDNS: "Ad çözümleme",
 			CheckTCP: "Sunucuya bağlantı", CheckTLS: "Güvenli bağlantı", CheckHTTP: "Sunucu yanıtı",
