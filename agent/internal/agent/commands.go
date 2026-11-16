@@ -148,6 +148,8 @@ func (a *Agent) runCommand(c Command) commandOutcome {
 		name := "openidx-logs-" + time.Now().UTC().Format("20060102-150405") + ".tar.gz"
 		return commandOutcome{status: "done", result: map[string]any{"files": files, "bytes": len(data)},
 			artifact: data, artifactName: name}
+	case "diagnose":
+		return a.diagnose()
 	}
 	return failed("unknown command kind " + c.Kind)
 }

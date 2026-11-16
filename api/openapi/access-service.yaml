@@ -4759,9 +4759,11 @@ paths:
       summary: Queue a fleet command for a device (reenroll and uninstall need fresh MFA)
       description: >-
         Kinds restart, collect_logs, reenroll, set_options ({log_level,
-        tray_hidden, tunnel_enabled}), update_now and uninstall. uninstall
-        needs a reason of at least 10 characters. The device receives it once
-        in /agent/config; it expires after 24 hours.
+        tray_hidden, tunnel_enabled}), update_now, uninstall and diagnose.
+        uninstall needs a reason of at least 10 characters. diagnose asks the
+        device to run its own doctor; the bundle it answers with is filed as a
+        diagnostic. The device receives a command once in /agent/config; it
+        expires after 24 hours.
       operationId: handleQueueAgentCommand
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleQueueAgentCommand
       requestBody:
@@ -4772,7 +4774,7 @@ paths:
               type: object
               required: [kind]
               properties:
-                kind: {type: string, enum: [restart, collect_logs, reenroll, set_options, update_now, uninstall]}
+                kind: {type: string, enum: [restart, collect_logs, reenroll, set_options, update_now, uninstall, diagnose]}
                 args: {type: object, additionalProperties: true}
                 reason: {type: string}
       responses:

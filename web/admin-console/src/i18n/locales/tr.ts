@@ -479,6 +479,7 @@ const tr: typeof en = {
     failed: 'Denetim tamamlanamadı. Biraz sonra tekrar deneyin.',
     healthy: 'Sorun bulunmadı.',
     healthyHint: 'Cihazınız kayıtlı, rapor veriyor ve ağa girmesine izin var. Yine de bir uygulama açılmıyorsa hangisi olduğunu BT\'ye bildirin.',
+    asking: 'Cihazınız şu anda kendini denetliyor. Bu yanıt yaklaşık yarım dakika içinde kendiliğinden yenilenecek.',
     noBundleHint: 'Bu yanıt sunucunun bildiklerine dayanıyor. Daha kesin bir yanıt için cihazda OpenIDX tepsi simgesini açıp "Neden bağlanamıyorum?"u seçin ya da orada `openidx-agent doctor` çalıştırın.',
     cause: {
       DEVICE_REVOKED: {
@@ -8599,6 +8600,7 @@ const tr: typeof en = {
         off: 'Kapalı',
         kinds: {
           restart: 'Ajanı yeniden başlat',
+          diagnose: 'Bağlantıyı teşhis et',
           collect_logs: 'Logları topla',
           update_now: 'Güncellemeleri şimdi denetle',
           set_options: 'Seçenekleri değiştir',

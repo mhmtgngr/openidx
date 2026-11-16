@@ -482,6 +482,7 @@ const en = {
     failed: 'The check could not be completed. Try again in a moment.',
     healthy: 'No problem found.',
     healthyHint: 'Your device is registered, reporting and allowed on the network. If one application still does not open, tell IT which one.',
+    asking: 'Your device is checking itself now. This answer will refresh on its own in about half a minute.',
     noBundleHint: 'This answer comes from what the server knows. For a more exact one, open the OpenIDX tray icon on the device and choose "Why can\'t I connect?", or run `openidx-agent doctor` there.',
     cause: {
       DEVICE_REVOKED: {
@@ -8691,6 +8692,7 @@ const en = {
         off: 'Off',
         kinds: {
           restart: 'Restart the agent',
+          diagnose: 'Diagnose the connection',
           collect_logs: 'Collect logs',
           update_now: 'Check for updates now',
           set_options: 'Change options',

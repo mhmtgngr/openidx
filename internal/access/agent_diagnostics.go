@@ -116,6 +116,44 @@ func (h *AgentAPIHandler) storeAgentDiagnostic(ctx context.Context, agentID, sou
 	return id, nil
 }
 
+// fileDiagnoseResult stores the bundle a device returned for a "diagnose"
+// command. The command is already answered; a result that holds no readable
+// bundle is logged and dropped, never an error to the device.
+func (h *AgentAPIHandler) fileDiagnoseResult(ctx context.Context, agentID string, result json.RawMessage) {
+	var body struct {
+		Bundle json.RawMessage `json:"bundle"`
+	}
+	if err := json.Unmarshal(result, &body); err != nil || len(body.Bundle) == 0 {
+		h.logger.Warn("diagnose result carries no bundle", zap.String("agent_id", agentID))
+		return
+	}
+	bundle, err := diagnose.ParseBundle(body.Bundle)
+	if err != nil {
+		h.logger.Warn("diagnose result bundle refused", zap.String("agent_id", agentID), zap.Error(err))
+		return
+	}
+	bundle.AgentID = agentID
+	now := time.Now().UTC()
+	if bundle.CollectedAt.After(now.Add(time.Minute)) || now.Sub(bundle.CollectedAt) > 24*time.Hour {
+		bundle.CollectedAt = now
+	}
+	verdict := diagnose.Evaluate(diagnose.Evidence{
+		Now: now, Bundle: bundle,
+		Device: &diagnose.DeviceFacts{Status: diagnose.DeviceActive, Live: true},
+	})
+	id, err := h.storeAgentDiagnostic(ctx, agentID, "command", bundle, verdict.Primary())
+	if err != nil {
+		h.logger.Error("store diagnose result failed", zap.Error(err))
+		return
+	}
+	outcome := "healthy"
+	if !verdict.Healthy {
+		outcome = verdict.Primary()
+	}
+	h.logAuditEvent("agent.diagnostic.uploaded", agentID, outcome, "diagnostic="+id+" source=command")
+	h.logAuditEventToDB(ctx, "agent.diagnostic.uploaded", agentID, outcome, "diagnostic="+id+" source=command")
+}
+
 // expireAgentDiagnostics removes bundles past their retention.
 func (h *AgentAPIHandler) expireAgentDiagnostics(ctx context.Context) {
 	if h.db == nil || h.db.Pool == nil {

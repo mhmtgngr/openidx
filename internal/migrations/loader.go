@@ -1826,5 +1826,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agentDiagnosticsUp,
 			DownSQL:     agentDiagnosticsDown,
 		},
+		{
+			Version:     258,
+			Name:        "agent_command_diagnose",
+			Description: "The diagnose fleet command. agent_commands.kind admits 'diagnose': the server asks a device to run its own doctor and answer with the diagnostic bundle, which the result handler files in agent_diagnostics. The kind CHECK is replaced, not dropped, so an unknown kind is still refused by the database. Down removes diagnose rows and restores the previous check.",
+			UpSQL:       agentCommandDiagnoseUp,
+			DownSQL:     agentCommandDiagnoseDown,
+		},
 	}
 }

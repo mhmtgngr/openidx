@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
@@ -27,8 +28,11 @@ type MyDiagnosis struct {
 	Verdict diagnose.Verdict `json:"verdict"`
 	// BundleAt is when the device's own doctor last reported, when that
 	// report was recent enough to be used.
-	BundleAt    *time.Time `json:"bundle_at,omitempty"`
-	GeneratedAt time.Time  `json:"generated_at"`
+	BundleAt *time.Time `json:"bundle_at,omitempty"`
+	// BundleRequested says the device was just asked for a fresh report: the
+	// same question in about half a minute gets a more exact answer.
+	BundleRequested bool      `json:"bundle_requested,omitempty"`
+	GeneratedAt     time.Time `json:"generated_at"`
 }
 
 // handleMyDiagnose diagnoses one of the caller's own devices: the newest
@@ -95,7 +99,56 @@ func (s *Service) handleMyDiagnose(c *gin.Context) {
 		at := ev.Bundle.CollectedAt
 		out.BundleAt = &at
 	}
+	// A device that is there and has told us nothing recent is asked to look
+	// at itself, so the next answer rests on more than the server's records.
+	if device != nil && out.BundleAt == nil && ev.Device.Live && ev.Device.Status == diagnose.DeviceActive {
+		out.BundleRequested = s.requestDeviceBundle(ctx, org.ID, device.AgentID, uid)
+	}
 	c.JSON(http.StatusOK, out)
+}
+
+// requestDeviceBundle queues a "diagnose" command for a device unless one is
+// already waiting, and reports whether one is now waiting. It is best
+// effort: the diagnosis was already given, and a failure here only means the
+// next answer is no better than this one.
+func (s *Service) requestDeviceBundle(ctx context.Context, orgID, agentID, userID string) bool {
+	var waiting int
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_commands
+		 WHERE org_id = $1 AND agent_id = $2 AND status IN ('queued', 'delivered')`,
+		orgID, agentID).Scan(&waiting); err != nil {
+		s.logger.Warn("my diagnose: could not count waiting commands", zap.Error(err))
+		return false
+	}
+	var diagnosing bool
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM agent_commands
+		                WHERE org_id = $1 AND agent_id = $2 AND kind = 'diagnose'
+		                  AND status IN ('queued', 'delivered'))`,
+		orgID, agentID).Scan(&diagnosing); err != nil {
+		s.logger.Warn("my diagnose: could not look for a waiting diagnose", zap.Error(err))
+		return false
+	}
+	if diagnosing {
+		return true
+	}
+	if waiting >= maxQueuedCommandsPerAgent {
+		return false
+	}
+	var createdBy interface{}
+	if _, err := uuid.Parse(userID); err == nil {
+		createdBy = userID
+	}
+	// A short life: an answer that arrives long after the person asked is
+	// answering nobody.
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO agent_commands (org_id, agent_id, kind, args, reason, created_by, expires_at)
+		VALUES ($1, $2, 'diagnose', '{}', 'asked by the device''s own user', $3::uuid, NOW() + INTERVAL '10 minutes')`,
+		orgID, agentID, createdBy); err != nil {
+		s.logger.Warn("my diagnose: could not queue a diagnose command", zap.Error(err))
+		return false
+	}
+	return true
 }
 
 // pickDevice returns the caller's agent-backed device with this id, or, with
