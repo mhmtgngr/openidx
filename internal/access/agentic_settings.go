@@ -119,6 +119,10 @@ func loadAgenticSettings(ctx context.Context, db *database.PostgresDB, orgID, ca
 	return s, nil
 }
 
+func (s *Service) denyPrivateModelHosts() bool {
+	return s.config != nil && s.config.AgenticDenyPrivateModelHosts
+}
+
 func (s *Service) agenticCap() string {
 	if s.config == nil {
 		return ""
@@ -203,7 +207,7 @@ func (s *Service) handlePutAgenticSettings(c *gin.Context) {
 	}
 	if body.BaseURL != nil {
 		u := strings.TrimSpace(*body.BaseURL)
-		if u != "" && (len(u) > 512 || provider.CheckBaseURL(u) != nil) {
+		if u != "" && (len(u) > 512 || provider.CheckBaseURL(u, s.denyPrivateModelHosts()) != nil) {
 			bad("base_url must be an http(s) address such as http://ollama.internal:11434/v1 (not link-local or unspecified)")
 			return
 		}
@@ -331,7 +335,8 @@ func (s *Service) agenticCipher() *secretcrypt.Cipher {
 // agenticProvider builds the model backend an organization chose. The error is
 // provider.ErrNone when it chose none; callers then answer from the rules.
 func (s *Service) agenticProvider(set agenticSettings) (agentic.Provider, error) {
-	cfg := provider.Config{Kind: set.Provider, Model: set.Model, BaseURL: set.BaseURL, NoTools: !set.ToolsEnabled}
+	cfg := provider.Config{Kind: set.Provider, Model: set.Model, BaseURL: set.BaseURL, NoTools: !set.ToolsEnabled,
+		DenyPrivate: s.denyPrivateModelHosts()}
 	if set.apiKeyEnc != "" {
 		key, err := s.agenticCipher().Decrypt(set.apiKeyEnc)
 		if err != nil {

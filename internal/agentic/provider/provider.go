@@ -26,6 +26,8 @@ type Config struct {
 	BaseURL string
 	APIKey  string
 	NoTools bool
+	// DenyPrivate: see OpenAIConfig.
+	DenyPrivate bool
 }
 
 // ErrNone means no model is configured; callers answer from the rules.
@@ -37,7 +39,7 @@ func New(c Config) (agentic.Provider, error) {
 	case KindAnthropic:
 		return NewAnthropic(AnthropicConfig{APIKey: c.APIKey, Model: c.Model})
 	case KindOpenAICompat:
-		return NewOpenAI(OpenAIConfig{BaseURL: c.BaseURL, Model: c.Model, APIKey: c.APIKey, NoTools: c.NoTools})
+		return NewOpenAI(OpenAIConfig{BaseURL: c.BaseURL, Model: c.Model, APIKey: c.APIKey, NoTools: c.NoTools, DenyPrivate: c.DenyPrivate})
 	}
 	return nil, ErrNone
 }

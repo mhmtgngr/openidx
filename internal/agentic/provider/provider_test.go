@@ -165,7 +165,7 @@ func TestOpenAICompatRoundTrip(t *testing.T) {
 }
 
 func TestOpenAIRefusesBadConfigAndServerErrors(t *testing.T) {
-	for _, c := range []OpenAIConfig{{BaseURL: "http://169.254.169.254/v1", Model: "m"}, {BaseURL: "http://0.0.0.0/v1", Model: "m"}, {BaseURL: "http://[fe80::1]/v1", Model: "m"}, {BaseURL: "ftp://x/v1", Model: "m"}, {BaseURL: "not a url", Model: "m"}, {BaseURL: "http://h/v1"}} {
+	for _, c := range []OpenAIConfig{{BaseURL: "http://169.254.169.254/v1", Model: "m"}, {BaseURL: "http://u:p@host/v1", Model: "m"}, {BaseURL: "http://host/v1?x=1", Model: "m"}, {BaseURL: "http://10.0.0.5/v1", Model: "m", DenyPrivate: true}, {BaseURL: "http://localhost.invalid/v1#f", Model: "m"}, {BaseURL: "http://0.0.0.0/v1", Model: "m"}, {BaseURL: "http://[fe80::1]/v1", Model: "m"}, {BaseURL: "ftp://x/v1", Model: "m"}, {BaseURL: "not a url", Model: "m"}, {BaseURL: "http://h/v1"}} {
 		if _, err := NewOpenAI(c); err == nil {
 			t.Errorf("%+v was accepted", c)
 		}
@@ -208,7 +208,12 @@ func TestOpenAIDoesNotFollowRedirectsOrDialForbiddenAddresses(t *testing.T) {
 	if _, err := o.Chat(context.Background(), request()); err == nil || hit {
 		t.Errorf("a redirect was followed (hit=%v, err=%v)", hit, err)
 	}
-	if forbidAddress(net.ParseIP("169.254.169.254")) == nil || forbidAddress(net.ParseIP("10.0.0.5")) != nil || forbidAddress(net.ParseIP("127.0.0.1")) != nil {
+	for _, bad := range []string{"100.100.100.200", "fd00:ec2::254", "::ffff:169.254.169.254", "0.0.0.0"} {
+		if forbidAddress(net.ParseIP(bad), false) == nil {
+			t.Errorf("%s was allowed", bad)
+		}
+	}
+	if forbidAddress(net.ParseIP("169.254.169.254"), false) == nil || forbidAddress(net.ParseIP("10.0.0.5"), false) != nil || forbidAddress(net.ParseIP("127.0.0.1"), false) != nil {
 		t.Error("forbidAddress: link-local must be refused; private and loopback allowed")
 	}
 }

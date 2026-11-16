@@ -74,6 +74,7 @@ func newDiagnoseHarness(t *testing.T, slug string) (*diagnoseHarness, string, st
 		c.Next()
 	})
 	api.POST("/my/diagnose", s.handleMyDiagnose)
+	api.POST("/my/assist/messages", s.handleAssistMessage)
 	return h, ada, bo
 }
 

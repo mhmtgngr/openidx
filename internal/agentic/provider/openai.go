@@ -36,6 +36,11 @@ type OpenAIConfig struct {
 	APIKey  string // optional; local servers usually have none
 	// NoTools says the model cannot call tools; it then only narrates.
 	NoTools bool
+	// DenyPrivate also refuses loopback, private (RFC 1918) and unique-local
+	// addresses, for a deployment that hosts several organizations and does
+	// not want one of them probing its network. By default they are allowed:
+	// a model server on the organization's own network is the point.
+	DenyPrivate bool
 	// Timeout bounds one request (default 60 s).
 	Timeout    time.Duration
 	HTTPClient *http.Client
@@ -50,7 +55,7 @@ func NewOpenAI(c OpenAIConfig) (*OpenAI, error) {
 	if c.Model == "" {
 		return nil, errors.New("openai-compatible: no model")
 	}
-	if err := CheckBaseURL(c.BaseURL); err != nil {
+	if err := CheckBaseURL(c.BaseURL, c.DenyPrivate); err != nil {
 		return nil, err
 	}
 	hc := c.HTTPClient
@@ -73,7 +78,7 @@ func NewOpenAI(c OpenAIConfig) (*OpenAI, error) {
 					if err != nil {
 						return err
 					}
-					return forbidAddress(net.ParseIP(host))
+					return forbidAddress(net.ParseIP(host), c.DenyPrivate)
 				},
 			}).DialContext},
 		}
@@ -127,7 +132,11 @@ func (o *OpenAI) Chat(ctx context.Context, req agentic.Request) (agentic.Respons
 	if err != nil {
 		return agentic.Response{}, err
 	}
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base+"/chat/completions", bytes.NewReader(raw))
+	endpoint, err := url.JoinPath(o.base, "chat", "completions")
+	if err != nil {
+		return agentic.Response{}, err
+	}
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
 		return agentic.Response{}, err
 	}
@@ -219,28 +228,52 @@ func toOpenAIMessages(m agentic.Message) []oaMessage {
 
 // forbidAddress refuses the addresses an address-bearing setting must never
 // reach even though private networks are fine (a model server on the
-// organization's own network is the point): link-local, which holds the cloud
-// metadata service, the unspecified address and multicast.
-func forbidAddress(ip net.IP) error {
+// organization's own network is the point, so private and loopback addresses
+// are allowed by design; the address is set by an admin of the organization):
+// link-local, which holds the cloud metadata service, other metadata ranges,
+// the unspecified address and multicast.
+func forbidAddress(ip net.IP, denyPrivate bool) error {
 	if ip == nil {
 		return errors.New("openai-compatible: not an IP address")
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4 // ::ffff:169.254.169.254 is the same address
 	}
 	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
 		return errors.New("openai-compatible: that address is not allowed")
 	}
+	if denyPrivate && (ip.IsLoopback() || ip.IsPrivate()) {
+		return errors.New("openai-compatible: private addresses are not allowed here")
+	}
+	for _, n := range metadataNets {
+		if n.Contains(ip) {
+			return errors.New("openai-compatible: that address is not allowed")
+		}
+	}
 	return nil
 }
+
+// metadataNets are the cloud metadata services that are not link-local:
+// carrier-grade NAT space (Alibaba's 100.100.100.200) and AWS's IPv6 endpoint.
+var metadataNets = func() (out []*net.IPNet) {
+	for _, c := range []string{"100.64.0.0/10", "fd00:ec2::/32"} {
+		_, n, _ := net.ParseCIDR(c)
+		out = append(out, n)
+	}
+	return out
+}()
 
 // CheckBaseURL is the save-time check on an endpoint address: http(s), a host,
 // and, when the host is a literal IP, one forbidAddress allows. A host name is
 // checked again after resolution, when it is dialled.
-func CheckBaseURL(raw string) error {
+func CheckBaseURL(raw string, denyPrivate bool) error {
 	u, err := url.Parse(strings.TrimRight(raw, "/"))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
-		return errors.New("openai-compatible: base URL must be http(s)://host/v1")
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("openai-compatible: base URL must be http(s)://host/v1, with no credentials, query or fragment")
 	}
 	if ip := net.ParseIP(u.Hostname()); ip != nil {
-		return forbidAddress(ip)
+		return forbidAddress(ip, denyPrivate)
 	}
 	return nil
 }

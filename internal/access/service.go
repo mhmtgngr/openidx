@@ -679,6 +679,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// operator's reading of a support code a user gave over the phone
 		// (my_diagnose.go).
 		api.POST("/my/diagnose", svc.handleMyDiagnose)
+		api.POST("/my/assist/messages", svc.handleAssistMessage)
 		api.POST("/diagnose/decode", operatorTier, svc.handleDecodeSupportCode)
 		api.GET("/agentic/settings", operatorTier, svc.handleGetAgenticSettings)
 		api.PUT("/agentic/settings", adminOnly, svc.handlePutAgenticSettings)

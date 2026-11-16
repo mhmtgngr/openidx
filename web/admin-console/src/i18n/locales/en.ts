@@ -483,6 +483,17 @@ const en = {
     healthy: 'No problem found.',
     healthyHint: 'Your device is registered, reporting and allowed on the network. If one application still does not open, tell IT which one.',
     asking: 'Your device is checking itself now. This answer will refresh on its own in about half a minute.',
+    assist: {
+      title: 'Ask the assistant',
+      placeholder: 'Ask about your connection…',
+      send: 'Send',
+      thinking: 'Thinking…',
+      you: 'You',
+      assistant: 'Assistant',
+      unavailable: 'The assistant could not answer just now. The result above is still correct.',
+      tooMany: 'You have asked a lot of questions in a short time. Try again in a few minutes.',
+      failed: 'The question could not be sent. Try again in a moment.',
+    },
     noBundleHint: 'This answer comes from what the server knows. For a more exact one, open the OpenIDX tray icon on the device and choose "Why can\'t I connect?", or run `openidx-agent doctor` there.',
     cause: {
       DEVICE_REVOKED: {

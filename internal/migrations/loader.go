@@ -1847,5 +1847,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agenticProviderUp,
 			DownSQL:     agenticProviderDown,
 		},
+		{
+			Version:     261,
+			Name:        "agentic_chat",
+			Description: "Assistant conversations. agentic_sessions and agentic_messages keep what a person and the assistant said, server-side so a conversation can continue and no transcript from a browser is ever trusted (it could carry forged assistant or tool turns). Text is stored as sent to the model, already masked. Org-scoped under FORCE RLS; rows expire after 30 days.",
+			UpSQL:       agenticChatUp,
+			DownSQL:     agenticChatDown,
+		},
 	}
 }

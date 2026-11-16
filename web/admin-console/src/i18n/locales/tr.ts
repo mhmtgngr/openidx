@@ -480,6 +480,17 @@ const tr: typeof en = {
     healthy: 'Sorun bulunmadı.',
     healthyHint: 'Cihazınız kayıtlı, rapor veriyor ve ağa girmesine izin var. Yine de bir uygulama açılmıyorsa hangisi olduğunu BT\'ye bildirin.',
     asking: 'Cihazınız şu anda kendini denetliyor. Bu yanıt yaklaşık yarım dakika içinde kendiliğinden yenilenecek.',
+    assist: {
+      title: 'Asistana sorun',
+      placeholder: 'Bağlantınız hakkında bir şey sorun…',
+      send: 'Gönder',
+      thinking: 'Düşünüyor…',
+      you: 'Siz',
+      assistant: 'Asistan',
+      unavailable: 'Asistan şu anda yanıt veremedi. Yukarıdaki sonuç yine de doğru.',
+      tooMany: 'Kısa sürede çok fazla soru sordunuz. Birkaç dakika sonra tekrar deneyin.',
+      failed: 'Soru gönderilemedi. Birazdan tekrar deneyin.',
+    },
     noBundleHint: 'Bu yanıt sunucunun bildiklerine dayanıyor. Daha kesin bir yanıt için cihazda OpenIDX tepsi simgesini açıp "Neden bağlanamıyorum?"u seçin ya da orada `openidx-agent doctor` çalıştırın.',
     cause: {
       DEVICE_REVOKED: {

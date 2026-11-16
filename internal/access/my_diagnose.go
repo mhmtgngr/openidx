@@ -33,6 +33,9 @@ type MyDiagnosis struct {
 	// same question in about half a minute gets a more exact answer.
 	BundleRequested bool      `json:"bundle_requested,omitempty"`
 	GeneratedAt     time.Time `json:"generated_at"`
+	// AssistantAvailable says the organization has an assistant the page may
+	// offer (set by the endpoint, not by the verdict code the tools share).
+	AssistantAvailable bool `json:"assistant_available,omitempty"`
 }
 
 // handleMyDiagnose diagnoses one of the caller's own devices: the newest
@@ -81,6 +84,9 @@ func (s *Service) handleMyDiagnose(c *gin.Context) {
 		s.logger.Error("my diagnose: evidence lookup failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to gather evidence"})
 	default:
+		if set, err := loadAgenticSettings(ctx, s.db, org.ID, s.agenticCap()); err == nil {
+			out.AssistantAvailable = assistantAvailable(set)
+		}
 		c.JSON(http.StatusOK, out)
 	}
 }

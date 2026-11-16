@@ -20,6 +20,8 @@ import (
 type agenticTools struct {
 	once sync.Once
 	reg  *agentic.Registry
+	// providerOverride replaces the organization's model in tests.
+	providerOverride agentic.Provider
 }
 
 // agenticRegistry builds the registry once.

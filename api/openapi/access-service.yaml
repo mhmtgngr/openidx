@@ -6580,6 +6580,46 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /api/v1/access/my/assist/messages:
+    post:
+      tags: [My Access]
+      summary: Ask the assistant why one of my own devices cannot connect
+      description: >
+        The verdict always comes from the rule engine; when the organization has
+        chosen a model it only narrates it. Without a model, or when the model
+        fails, the answer carries the verdict alone. Conversations are kept
+        server-side for 30 days and belong to the person who started them.
+      operationId: assistMessage
+      x-openidx-handler: internal/access.(*Service).handleAssistMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: {type: string, maxLength: 2000}
+                session_id: {type: string, description: 'Continue this conversation'}
+                agent_id: {type: string, description: 'One of my devices; default is the one that reported most recently'}
+                lang: {type: string, enum: [en, tr]}
+      responses:
+        '200':
+          description: The assistant's reply (when a model answered) and the rule engine's diagnosis
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          description: Too many questions in a short time
+
   /api/v1/access/agentic/settings:
     get:
       tags: [Agent Fleet]
