@@ -105,6 +105,8 @@ var publicAccessRoutes = map[string]publicRoute{
 		"windows-app discovery from an agent bound to a host; same X-Agent-ID + X-Auth-Token check as /agent/report"},
 	"POST /api/v1/access/agent/commands/:command_id/result": {refusesWithoutState,
 		"a device's answer to a fleet command (B8.6); requireEnrolledAgent runs before the body is read, the body is device-signed, and only a command queued for that agent can be updated"},
+	"POST /api/v1/access/agent/diagnostics": {refusesWithoutState,
+		"a device's own diagnostic bundle; requireEnrolledAgent runs before the body is read, the body is capped at 64 KiB, device-signed and parsed strictly, and the row is filed under the credential's device whatever the bundle claims"},
 	"POST /api/v1/access/enroll": {refusesWithoutState,
 		"the Tier-0 dark-platform door: trades a session bearer or enrollment token for a one-time Ziti enrollment JWT, and verifies it itself"},
 

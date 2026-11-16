@@ -1819,5 +1819,12 @@ func allMigrations() []*Migration {
 			UpSQL:       tunnelScopeUp,
 			DownSQL:     tunnelScopeDown,
 		},
+		{
+			Version:     257,
+			Name:        "agent_diagnostics",
+			Description: "Diagnostic bundles. agent_diagnostics keeps what a device's own doctor found when it could not connect (the bundle, bounded and parsed strictly before it is stored; the leading cause the rule engine drew from it; when it was collected), as evidence for a person or operator asking why the device cannot connect. Org-scoped under FORCE RLS; rows expire after 30 days and each device keeps only its most recent twenty. The bundle carries no token, key or proxy password by construction.",
+			UpSQL:       agentDiagnosticsUp,
+			DownSQL:     agentDiagnosticsDown,
+		},
 	}
 }
