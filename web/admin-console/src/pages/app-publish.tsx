@@ -126,6 +126,9 @@ const statusColors: Record<string, string> = {
 
 export function AppPublishPage() {
   const { t } = useTranslation()
+  // The connector wizard links here with ?site=<slug> so publishing starts
+  // pre-aimed at the site the new connector serves.
+  const presetSite = new URLSearchParams(window.location.search).get('site') ?? ''
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState('apps')
@@ -149,7 +152,7 @@ export function AppPublishPage() {
   const [publishAppTarget, setPublishAppTarget] = useState<PublishedApp | null>(null)
   const [publicHost, setPublicHost] = useState('')
   const [landingPath, setLandingPath] = useState('/')
-  const [publishSite, setPublishSite] = useState('')
+  const [publishSite, setPublishSite] = useState(presetSite === 'default' ? '' : presetSite)
 
   // ---- Queries ----
 
