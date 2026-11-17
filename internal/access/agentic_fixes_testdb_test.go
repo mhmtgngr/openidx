@@ -182,9 +182,12 @@ func TestAssistantProviderSettings(t *testing.T) {
 		t.Errorf("%d refused changes were stored", n)
 	}
 
-	code, out := put(map[string]any{"provider": "anthropic", "api_key": "sk-ant-secret-1", "cloud_consent": true})
+	code, out := put(map[string]any{"provider": "anthropic", "api_key": "sk-ant-secret-1", "cloud_consent": true, "base_url": "http://evil.example/v1"})
 	if code != http.StatusOK || out["provider"] != "anthropic" || out["has_api_key"] != true || out["cloud_consent_at"] == nil {
 		t.Fatalf("anthropic: %d %v", code, out)
+	}
+	if out["base_url"] != "" {
+		t.Errorf("a cloud model kept an address: %v", out["base_url"])
 	}
 	if raw, _ := json.Marshal(out); bytes.Contains(raw, []byte("sk-ant-secret-1")) {
 		t.Error("the API key was returned")
