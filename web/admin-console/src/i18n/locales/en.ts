@@ -473,6 +473,48 @@ const en = {
   // "Why can't I connect?" (components/why-cant-i-connect.tsx). The cause codes
   // are the rule engine's (internal/diagnose/causes.go); a Go test there checks
   // that every one of them has words here, in every locale.
+  accessPlans: {
+    title: 'Open access with a plan',
+    description: 'Say which application should be open to which group. You see exactly what would change before anything does; an administrator approves it, and it can be undone.',
+    resource: 'Application (name or id)',
+    group: 'Group (name or id)',
+    plan: 'Make a plan',
+    planning: 'Planning…',
+    step: 'Give group "{{group}}" access to "{{resource}}"',
+    members: '{{count}} people in the group',
+    now: {
+      allowed: 'Today a member of this group can already open it.',
+      blocked: 'Today a member of this group cannot open it: {{why}}',
+      none: 'The group has nobody to check with.',
+    },
+    after: {
+      allowed: 'Checked after the change: a member of the group can open it.',
+      blocked: 'Checked after the change: a member of the group still cannot open it: {{why}}',
+      none: 'The group has nobody to check with.',
+    },
+    pending: 'Waiting for an administrator',
+    recent: 'Recent plans',
+    approve: 'Approve and apply',
+    dismiss: 'Dismiss',
+    undo: 'Undo',
+    status: { pending: 'Waiting', applied: 'Applied', rejected: 'Dismissed', undone: 'Undone', noop: 'Nothing to do', blocked: 'Cannot be done' },
+    approved: 'Applied',
+    dismissed: 'Dismissed',
+    undone: 'Taken back',
+    stale: 'This plan no longer applies; something changed.',
+    failed: 'The request failed',
+    ambiguous: 'That name matches more than one; use the id.',
+    none: 'No plans yet.',
+    code: {
+      RESOURCE_NOT_FOUND: 'There is no such application in this organization.',
+      GROUP_NOT_FOUND: 'There is no such group in this organization.',
+      RESOURCE_DISABLED: 'The application is switched off, so opening it to a group would change nothing.',
+      ALREADY_GRANTED: 'This group already has access; nothing to do.',
+      EMPTY_GROUP: 'The group has no members, so nobody gains access yet.',
+      WIDE_GROUP: 'This group is about half the organization or more: this opens the application widely.',
+      PRIVILEGED_RESOURCE: 'This is a privileged resource. Check that the group should have it.',
+    },
+  },
   diagnose: {
     title: 'Why can\'t I connect?',
     description: 'Check your device and see what is wrong and what to do about it.',

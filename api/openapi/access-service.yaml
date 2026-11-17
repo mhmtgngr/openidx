@@ -6620,6 +6620,148 @@ paths:
         '429':
           description: Too many questions in a short time
 
+  /api/v1/access/plans:
+    post:
+      tags: [Agent Fleet]
+      summary: Lay out a plan to open an application to a group (operator)
+      description: >
+        Changes nothing. A plan that is ready is stored for an administrator to
+        decide (201); one that is not needed answers 200 with status noop; one
+        that cannot be done answers 422 with its blockers. Resource and group
+        are each a name or an id; a name that matches more than one answers 409.
+      operationId: createAccessPlan
+      x-openidx-handler: internal/access.(*Service).handleCreateAccessPlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resource, group]
+              properties:
+                resource: {type: string}
+                group: {type: string}
+      responses:
+        '200':
+          description: Nothing to do (the group already has access)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '201':
+          description: The plan, stored and waiting for an administrator
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: A name matches more than one
+        '422':
+          description: The plan cannot be done as asked; the body says why
+    get:
+      tags: [Agent Fleet]
+      summary: Plans waiting for a decision and those decided in the last week (operator)
+      operationId: listAccessPlans
+      x-openidx-handler: internal/access.(*Service).handleListAccessPlans
+      responses:
+        '200':
+          description: The plans, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/access/plans/{id}/approve:
+    post:
+      tags: [Agent Fleet]
+      summary: Approve an access plan and carry it out (admin)
+      description: >
+        Grants the group access only if the application and group are still as
+        they were when the plan was made (otherwise 409 and the plan is
+        retired), then checks, with the decision engine the proxy uses, what a
+        member of the group can now do.
+      operationId: approveAccessPlan
+      x-openidx-handler: internal/access.(*Service).handleApproveAccessPlan
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Whether the grant was made, and what a member can now do
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The application or the group changed since the plan was made
+
+  /api/v1/access/plans/{id}/reject:
+    post:
+      tags: [Agent Fleet]
+      summary: Dismiss an access plan (admin)
+      operationId: rejectAccessPlan
+      x-openidx-handler: internal/access.(*Service).handleRejectAccessPlan
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: The plan that was dismissed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/plans/{id}/undo:
+    post:
+      tags: [Agent Fleet]
+      summary: Take back exactly what an applied access plan granted (admin)
+      operationId: undoAccessPlan
+      x-openidx-handler: internal/access.(*Service).handleUndoAccessPlan
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: The plan that was undone
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The plan granted nothing (the access was already there), so there is nothing to undo
+
   /api/v1/access/agent/rollout:
     get:
       tags: [Agent Fleet]

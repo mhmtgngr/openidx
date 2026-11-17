@@ -197,7 +197,7 @@ func (h *AgentAPIHandler) syncRolloutProposal(ctx context.Context, orgID string,
 	if _, err := h.db.Pool.Exec(ctx, `
 		INSERT INTO agentic_proposals (org_id, kind, target_type, target_id, params, reasons, base_hash)
 		VALUES ($1, $2, 'org', $6::text, $3::jsonb, $4::jsonb, $5)
-		ON CONFLICT (org_id, kind) WHERE status = 'pending' DO NOTHING`,
+		ON CONFLICT (org_id, kind, target_id) WHERE status = 'pending' DO NOTHING`,
 		orgID, want, string(params), string(reasons), settingsHash(a.Settings), orgID); err != nil {
 		h.logger.Warn("rollout: could not record a proposal", zap.Error(err))
 	}

@@ -40,6 +40,7 @@ import { useToast } from '../hooks/use-toast'
 import { ManageAppAccessDialog } from '../components/manage-app-access-dialog'
 import { AppConditionsDialog } from '../components/app-conditions-dialog'
 import { PublishToVendorDialog } from '../components/publish-to-vendor-dialog'
+import { AccessPlansSection } from '../components/access-plans-section'
 
 interface Application {
   id: string
@@ -1041,6 +1042,8 @@ export function ApplicationsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AccessPlansSection />
 
       {publishApp && (
         <PublishToVendorDialog
