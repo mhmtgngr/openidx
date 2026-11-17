@@ -28,7 +28,9 @@ func (e *Engine) Doctor(lang string, fix bool) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), doctorBudget)
 	defer cancel()
 	b := collect.Run(ctx, doctorDeps(), e.configDir, checks.AgentVersion, fix)
-	out, err := json.Marshal(doctor.NewReport(b, l))
+	report := doctor.NewReport(b, l)
+	report.CanRepair = !collect.OnPhone()
+	out, err := json.Marshal(report)
 	if err != nil {
 		return "", err
 	}

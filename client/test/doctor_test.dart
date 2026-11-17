@@ -118,6 +118,11 @@ void main() {
   });
 
   group('DoctorReport.fromJson', () {
+    test('a report that does not say can_repair is assumed repairable (older agents)', () {
+      expect(DoctorReport.fromJson(const {'healthy': false}).canRepair, isTrue);
+      expect(DoctorReport.fromJson(const {'healthy': false, 'can_repair': false}).canRepair, isFalse);
+    });
+
     test('tolerates a report with nothing in it', () {
       final r = DoctorReport.fromJson(const {});
       expect(r.healthy, isFalse);
@@ -165,6 +170,14 @@ void main() {
       expect(engine.calls, [false, true]);
       expect(find.text('Clear the name-lookup cache'), findsOneWidget);
       expect(find.text('Needs administrator rights'), findsOneWidget);
+    });
+
+    testWidgets('a phone that cannot repair itself is told what to do and offered no repair button', (tester) async {
+      final json = _report(healthy: false)..['can_repair'] = false;
+      await pump(tester, _FakeEngine(DoctorReport.fromJson(json)));
+      expect(find.textContaining('another network'), findsOneWidget);
+      expect(find.text('Try to fix'), findsNothing);
+      expect(find.text('Check again'), findsOneWidget);
     });
 
     testWidgets('an engine that cannot answer is shown as an error, not as a healthy device', (tester) async {

@@ -119,18 +119,18 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
-          // The doctor looks at this computer's own agent service and tunnel, which
-          // a phone does not have, so it is a desktop screen.
-          if (!Platform.isIOS && !Platform.isAndroid)
-            ListTile(
-              leading: const Icon(Icons.medical_services_outlined),
-              title: const Text("Why can't I connect?"),
-              subtitle: const Text('Check this device and see how to fix it'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const DoctorScreen()),
-              ),
+          // The doctor runs the agent's own checks on this device: on a computer
+          // it can also try the safe repairs, on a phone it only says what is
+          // wrong and what to do.
+          ListTile(
+            leading: const Icon(Icons.medical_services_outlined),
+            title: const Text("Why can't I connect?"),
+            subtitle: const Text('Check this device and see how to fix it'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const DoctorScreen()),
             ),
+          ),
           ListTile(
             leading: const Icon(Icons.logout),
             title: const Text('Sign out'),

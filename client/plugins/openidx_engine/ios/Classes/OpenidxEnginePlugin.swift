@@ -84,6 +84,9 @@ public class OpenidxEnginePlugin: NSObject, FlutterPlugin {
       return try callString { MobileRegisterPushDevice(deviceToken, platform, $0) }
     case "posture":
       return try callString { MobilePosture($0) }
+    case "doctor":
+      let lang = str(args, "lang")
+      return try callString { MobileDoctor(lang, $0) }
     case "pamList":
       return try callString { MobilePamList($0) }
     case "pamConnect":

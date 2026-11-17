@@ -80,7 +80,7 @@ class _DoctorScreenState extends ConsumerState<DoctorScreen> {
                 label: Text(report == null ? 'Check' : 'Check again'),
               ),
               const SizedBox(width: 12),
-              if (report != null && !report.healthy)
+              if (report != null && !report.healthy && report.canRepair)
                 FilledButton.icon(
                   onPressed: _busy ? null : () => _run(fix: true),
                   icon: const Icon(Icons.build_outlined),

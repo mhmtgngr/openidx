@@ -67,6 +67,7 @@ class OpenidxEnginePlugin : FlutterPlugin, MethodCallHandler {
       "enroll" -> Mobile.enroll(arg(call, "code"))
       "registerPushDevice" -> Mobile.registerPushDevice(arg(call, "deviceToken"), arg(call, "platform"))
       "posture" -> Mobile.posture()
+      "doctor" -> Mobile.doctor(arg(call, "lang"))
       "pamList" -> Mobile.pamList()
       "pamConnect" -> Mobile.pamConnect(arg(call, "entryId"))
       "pamRequest" -> { Mobile.pamRequest(arg(call, "entryId"), arg(call, "reason")); null }

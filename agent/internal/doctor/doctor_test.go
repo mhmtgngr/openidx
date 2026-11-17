@@ -517,3 +517,18 @@ func TestParseLang(t *testing.T) {
 		t.Error("an unknown language must be refused")
 	}
 }
+
+func TestMobileSkipsTheChecksAboutProcessesAPhoneDoesNotHave(t *testing.T) {
+	in := healthyInputs()
+	in.Mobile = true
+	in.Tunnel, in.TunnelExpected, in.ServiceRunning = nil, false, nil
+	b := Run(context.Background(), in, fakeProbes{}, Options{})
+	wantCheck(t, b, CheckService, StatusSkipped, "")
+	wantCheck(t, b, CheckTunnel, StatusSkipped, "")
+	if !b.Healthy() {
+		t.Errorf("a phone with a working network was judged unhealthy: %+v", b.Failing())
+	}
+	// Network problems are still found: the phone's wifi is the usual culprit.
+	b = Run(context.Background(), in, fakeProbes{resolveErr: errors.New("nxdomain")}, Options{})
+	wantCheck(t, b, CheckDNS, StatusFail, CodeDNSFail)
+}
