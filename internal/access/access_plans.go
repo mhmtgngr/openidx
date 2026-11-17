@@ -26,11 +26,8 @@ import (
 // and says so in plain words. An undo removes exactly the assignment the plan
 // made.
 
-const (
-	proposalAccessOpen = "access_open"
-	// accessPlanLife is how long a plan waits for a decision.
-	accessPlanLife = 24 * time.Hour
-)
+// accessPlanLife is how long a plan waits for a decision.
+const accessPlanLife = 24 * time.Hour
 
 type planResource struct {
 	ID   string `json:"id"`
