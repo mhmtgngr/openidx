@@ -67,7 +67,9 @@ export function RolloutAssistantSection() {
   })
 
   if (q.isLoading) return <LoadingSpinner />
-  if (q.isError || !q.data) return <QueryError error={q.error} />
+  if (q.isError) return <QueryError error={q.error} />
+  // An answer without a verdict is not an assessment; show nothing rather than guess.
+  if (!q.data?.verdict) return null
   const a = q.data
   const c = a.verdict.counts
   const reason = (code: string) =>

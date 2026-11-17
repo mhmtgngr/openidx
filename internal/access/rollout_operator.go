@@ -116,7 +116,7 @@ func (h *AgentAPIHandler) assessRollout(ctx context.Context, orgID string) (roll
 		return rolloutAssessment{}, err
 	}
 	a := rolloutAssessment{Target: in.Target, TargetSource: source, Settings: settings,
-		Verdict: rollout.Evaluate(in), Pending: []rolloutProposalRecord{}}
+		Verdict: rollout.JudgeRollout(in), Pending: []rolloutProposalRecord{}}
 	cap := ""
 	if c := h.cfg(); c != nil {
 		cap = c.AgenticMode

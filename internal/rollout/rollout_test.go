@@ -41,7 +41,7 @@ func in(percent int, paused bool, since time.Duration, ds []Device) Input {
 	return Input{Now: now, Target: "0.6.0", Settings: Settings{Percent: percent, Paused: paused, ChangedAt: now.Add(-since)}, Devices: ds}
 }
 
-func TestEvaluate(t *testing.T) {
+func TestJudgeRollout(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		in     Input
@@ -63,7 +63,7 @@ func TestEvaluate(t *testing.T) {
 		{"at 100 with stragglers it is not done and not widened", in(100, false, 2*time.Hour, fleet(10, 5, 0)), StatusSoaking, ReasonWaiting, nil},
 		{"an empty ring has nothing to wait for", in(5, false, 2*time.Hour, nil), StatusReady, ReasonEmptyRing, &Proposal{ActionAdvance, 25}},
 	} {
-		v := Evaluate(tc.in)
+		v := JudgeRollout(tc.in)
 		if v.Status != tc.status || len(v.Reasons) == 0 || v.Reasons[0] != tc.first || !reflect.DeepEqual(v.Proposal, tc.prop) {
 			t.Errorf("%s: got %s %v %+v, want %s %s %+v", tc.name, v.Status, v.Reasons, v.Proposal, tc.status, tc.first, tc.prop)
 		}
@@ -73,7 +73,7 @@ func TestEvaluate(t *testing.T) {
 func TestOfflineDevicesAreNotWaitedFor(t *testing.T) {
 	ds := fleet(10, 9, 0)
 	ds[9].Live = false // the tenth is switched off
-	v := Evaluate(in(25, false, 2*time.Hour, ds))
+	v := JudgeRollout(in(25, false, 2*time.Hour, ds))
 	if v.Status != StatusReady || v.Counts.Offline != 1 {
 		t.Errorf("an offline device blocked the rollout: %+v", v)
 	}
@@ -93,7 +93,7 @@ func TestOldFailuresAndOtherRingsDoNotCount(t *testing.T) {
 			ds[i].UpdateAt = now.Add(-48 * time.Hour) // a day and more ago
 		}
 	}
-	if v := Evaluate(in(25, false, 2*time.Hour, ds)); v.Status == StatusUnhealthy {
+	if v := JudgeRollout(in(25, false, 2*time.Hour, ds)); v.Status == StatusUnhealthy {
 		t.Errorf("a failure from two days ago paused the rollout: %+v", v)
 	}
 	ds = fleet(10, 8, 2)
@@ -102,16 +102,16 @@ func TestOldFailuresAndOtherRingsDoNotCount(t *testing.T) {
 			ds[i].InRing = false // the ring does not reach it
 		}
 	}
-	if v := Evaluate(in(25, false, 2*time.Hour, ds)); v.Counts.Failed != 0 {
+	if v := JudgeRollout(in(25, false, 2*time.Hour, ds)); v.Counts.Failed != 0 {
 		t.Errorf("a device outside the ring was counted: %+v", v.Counts)
 	}
 }
 
 func TestVersionsCompareWithoutTheLeadingV(t *testing.T) {
-	if !SameVersion("v0.6.0", "0.6.0") || SameVersion("", "") || SameVersion("0.6.0", "0.6.1") {
-		t.Error("SameVersion")
+	if !SameRelease("v0.6.0", "0.6.0") || SameRelease("", "") || SameRelease("0.6.0", "0.6.1") {
+		t.Error("SameRelease")
 	}
-	v := Evaluate(Input{Now: now, Target: "v0.6.0", Settings: Settings{Percent: 100, ChangedAt: now.Add(-3 * time.Hour)}, Devices: fleet(4, 4, 0)})
+	v := JudgeRollout(Input{Now: now, Target: "v0.6.0", Settings: Settings{Percent: 100, ChangedAt: now.Add(-3 * time.Hour)}, Devices: fleet(4, 4, 0)})
 	if v.Status != StatusComplete {
 		t.Errorf("v-prefixed target: %+v", v)
 	}
@@ -119,8 +119,8 @@ func TestVersionsCompareWithoutTheLeadingV(t *testing.T) {
 
 func TestRings(t *testing.T) {
 	for p, want := range map[int]int{0: 5, 5: 25, 24: 25, 25: 50, 50: 100, 99: 100, 100: 0} {
-		if got := NextRing(p); got != want {
-			t.Errorf("NextRing(%d) = %d, want %d", p, got, want)
+		if got := NextRingAbove(p); got != want {
+			t.Errorf("NextRingAbove(%d) = %d, want %d", p, got, want)
 		}
 	}
 }

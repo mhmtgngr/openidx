@@ -142,14 +142,14 @@ type Verdict struct {
 	Proposal *Proposal `json:"proposal,omitempty"`
 }
 
-// SameVersion compares versions the way a device reports them: a leading "v"
+// SameRelease compares versions the way a device reports them: a leading "v"
 // does not make a different release.
-func SameVersion(a, b string) bool {
+func SameRelease(a, b string) bool {
 	return a != "" && strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
 }
 
-// NextRing is the first ring above percent, or 0 when there is none.
-func NextRing(percent int) int {
+// NextRingAbove is the first ring above percent, or 0 when there is none.
+func NextRingAbove(percent int) int {
 	for _, r := range Rings {
 		if r > percent {
 			return r
@@ -158,8 +158,11 @@ func NextRing(percent int) int {
 	return 0
 }
 
-// Evaluate judges the rollout.
-func Evaluate(in Input) Verdict {
+// JudgeRollout judges the rollout. (Its name is deliberately unlike the
+// generic Evaluate/Check of other packages: internal/revocation's census follows
+// calls by name alone, and a common name here would join this package to
+// whatever else answers to it.)
+func JudgeRollout(in Input) Verdict {
 	v := Verdict{Reasons: []string{}}
 	if in.Target == "" {
 		v.Status = StatusNoTarget
@@ -173,7 +176,7 @@ func Evaluate(in Input) Verdict {
 			continue
 		}
 		c.InRing++
-		on := SameVersion(d.Version, in.Target)
+		on := SameRelease(d.Version, in.Target)
 		switch {
 		case on:
 			c.OnTarget++
@@ -229,7 +232,7 @@ func Evaluate(in Input) Verdict {
 		v.Reasons = append(v.Reasons, ReasonWaiting)
 		return v
 	}
-	next := NextRing(in.Settings.Percent)
+	next := NextRingAbove(in.Settings.Percent)
 	if next == 0 {
 		// The last ring is reached and everything live is on the target.
 		v.Status = StatusComplete
