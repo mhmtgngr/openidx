@@ -11,6 +11,11 @@ var (
 	ErrUnsupported    = errors.New("not supported on this platform")
 )
 
+// WindowsServiceName is the agent's Windows service. It repeats
+// winservice.ServiceName because that package imports the agent, which
+// imports this one; a test in cmd/openidx-agent holds the two together.
+const WindowsServiceName = "OpenIDXAgent"
+
 // Actions are the local repairs. Both are safe to repeat and change nothing
 // about what the device may reach.
 type Actions interface {

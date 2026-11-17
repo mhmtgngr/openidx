@@ -59,6 +59,9 @@ var agentCommandKinds = map[string]bool{
 	"set_options":  false,
 	"update_now":   false,
 	"uninstall":    true,
+	// The device runs its own doctor and answers with the bundle, which
+	// HandleAgentCommandResult files in agent_diagnostics.
+	"diagnose": false,
 }
 
 // agentCommandDelivery is one command as /agent/config hands it to a device.
@@ -163,7 +166,7 @@ func (h *AgentAPIHandler) HandleQueueAgentCommand(c *gin.Context) {
 		return
 	}
 	if _, known := agentCommandKinds[body.Kind]; !known {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be restart, collect_logs, reenroll, set_options, update_now or uninstall"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be restart, collect_logs, reenroll, set_options, update_now, uninstall or diagnose"})
 		return
 	}
 	body.Reason = strings.TrimSpace(body.Reason)
@@ -451,6 +454,9 @@ func (h *AgentAPIHandler) HandleAgentCommandResult(c *gin.Context) {
 		h.logger.Error("store agent command result failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store the result"})
 		return
+	}
+	if kind == "diagnose" && body.Status == "done" {
+		h.fileDiagnoseResult(ctx, agentID, body.Result)
 	}
 	detail := "kind=" + kind + " command=" + logsafe.Clean(c.Param("command_id")) + " status=" + body.Status
 	h.logAuditEvent("agent.command_completed", agentID, body.Status, detail)

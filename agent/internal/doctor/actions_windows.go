@@ -12,8 +12,6 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
-
-	"github.com/openidx/openidx/agent/internal/winservice"
 )
 
 type osActions struct{}
@@ -33,7 +31,7 @@ func (osActions) RestartService(ctx context.Context) error {
 		return elevation(err)
 	}
 	defer m.Disconnect()
-	s, err := m.OpenService(winservice.ServiceName)
+	s, err := m.OpenService(WindowsServiceName)
 	if err != nil {
 		return elevation(err)
 	}

@@ -28,7 +28,7 @@ export interface AgentCommandRecord {
   artifact_size?: number
 }
 
-export const COMMAND_KINDS = ['restart', 'collect_logs', 'update_now', 'set_options', 'reenroll', 'uninstall'] as const
+export const COMMAND_KINDS = ['restart', 'diagnose', 'collect_logs', 'update_now', 'set_options', 'reenroll', 'uninstall'] as const
 type CommandKind = (typeof COMMAND_KINDS)[number]
 
 // AgentCommandsDialog queues fleet commands for one device and shows the

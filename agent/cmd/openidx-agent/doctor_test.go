@@ -20,6 +20,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/doctor/collect"
 	"github.com/openidx/openidx/agent/internal/ipc"
 	"github.com/openidx/openidx/agent/internal/tunnel"
+	"github.com/openidx/openidx/agent/internal/winservice"
 )
 
 type okProbes struct{}
@@ -170,5 +171,12 @@ func TestExportWritesOwnerOnlyAndNeverOverwrites(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(after, data) {
 		t.Error("the existing file was changed")
+	}
+}
+
+// The doctor restarts the agent's Windows service by a name it cannot import.
+func TestDoctorRestartsTheServiceTheAgentInstalls(t *testing.T) {
+	if doctor.WindowsServiceName != winservice.ServiceName {
+		t.Errorf("doctor would restart %q; the agent's service is %q", doctor.WindowsServiceName, winservice.ServiceName)
 	}
 }

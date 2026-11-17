@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -18,8 +19,11 @@ import (
 )
 
 type diagnoseHarness struct {
-	t      *testing.T
-	exec   func(sql string, args ...any)
+	t    *testing.T
+	exec func(sql string, args ...any)
+	pool interface {
+		QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	}
 	orgID  string
 	router *gin.Engine
 	as     *string
@@ -37,7 +41,7 @@ func newDiagnoseHarness(t *testing.T, slug string) (*diagnoseHarness, string, st
 	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		t.Fatalf("migrate to latest: %v", err)
 	}
-	h := &diagnoseHarness{t: t}
+	h := &diagnoseHarness{t: t, pool: db.Pool}
 	if err := db.Pool.QueryRow(ctx,
 		`INSERT INTO organizations (name, slug) VALUES ($1, $1) RETURNING id::text`, slug).Scan(&h.orgID); err != nil {
 		t.Fatalf("seed organization: %v", err)
@@ -125,9 +129,28 @@ func TestMyDiagnose(t *testing.T) {
 	if code != http.StatusOK || out.AgentID != "ada-new" || out.Verdict.Primary() != diagnose.CauseTunnelDown || out.BundleAt != nil {
 		t.Errorf("default device: %d %+v", code, out)
 	}
-	// A named device of the caller's.
+	// The device is there and has sent no bundle: it is asked for one, once.
+	waiting := func(agentID string) (n int) {
+		h.t.Helper()
+		if err := h.pool.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM agent_commands WHERE agent_id = $1 AND kind = 'diagnose' AND status = 'queued'`, agentID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if !out.BundleRequested || waiting("ada-new") != 1 {
+		t.Errorf("a live device with no bundle: requested=%v, %d waiting", out.BundleRequested, waiting("ada-new"))
+	}
+	if _, out = h.diagnose("ada-new"); !out.BundleRequested || waiting("ada-new") != 1 {
+		t.Errorf("asking again: requested=%v, %d waiting, want one command still", out.BundleRequested, waiting("ada-new"))
+	}
+	// A named device of the caller's. It is silent: asking it would wait for
+	// nothing.
 	if code, out = h.diagnose("ada-old"); code != http.StatusOK || out.Verdict.Primary() != diagnose.CauseDeviceOffline {
 		t.Errorf("silent device: %d %+v", code, out)
+	}
+	if out.BundleRequested || waiting("ada-old") != 0 {
+		t.Errorf("a silent device was asked for a bundle")
 	}
 	if code, out = h.diagnose("ada-gone"); code != http.StatusOK || out.Verdict.Primary() != diagnose.CauseDeviceRevoked {
 		t.Errorf("revoked device: %d %+v", code, out)
@@ -143,7 +166,7 @@ func TestMyDiagnose(t *testing.T) {
 	// A fresh bundle from the device's own doctor outranks the last report.
 	h.bundle("ada-new", "2 minutes", "DNS_FAIL")
 	code, out = h.diagnose("ada-new")
-	if code != http.StatusOK || out.Verdict.Primary() != diagnose.CauseDNSFail || out.BundleAt == nil {
+	if code != http.StatusOK || out.Verdict.Primary() != diagnose.CauseDNSFail || out.BundleAt == nil || out.BundleRequested {
 		t.Errorf("with a fresh bundle: %d %+v", code, out)
 	}
 	// An old one is not used, and the answer says so.

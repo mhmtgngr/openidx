@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -7,7 +7,7 @@ vi.mock('../lib/api', () => ({
   api: { post: vi.fn() },
 }))
 
-import { WhyCantIConnect, type MyDiagnosis } from './why-cant-i-connect'
+import { WhyCantIConnect, RECHECK_AFTER_MS, type MyDiagnosis } from './why-cant-i-connect'
 import { api } from '../lib/api'
 
 const post = vi.mocked(api.post)
@@ -82,5 +82,40 @@ describe('WhyCantIConnect', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('The check could not be completed.')
     expect(screen.queryByText('No problem found.')).not.toBeInTheDocument()
+  })
+
+  describe('when the device was just asked for a fresh report', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('asks again once on its own, then stops', async () => {
+      post
+        .mockResolvedValueOnce(answer(['TUNNEL_DOWN'], { bundle_requested: true }))
+        .mockResolvedValue(answer(['DNS_FAIL'], { bundle_requested: true }))
+      mount()
+      fireEvent.click(screen.getByRole('button', { name: 'Check my device' }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(screen.getByText(/checking itself now/)).toBeInTheDocument()
+      expect(post).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RECHECK_AFTER_MS)
+      })
+      expect(post).toHaveBeenCalledTimes(2)
+      expect(screen.getByText('The device cannot find the OpenIDX server on its network.')).toBeInTheDocument()
+
+      // The second answer also says "requested", and the card does not loop.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RECHECK_AFTER_MS * 3)
+      })
+      expect(post).toHaveBeenCalledTimes(2)
+      expect(screen.queryByText(/checking itself now/)).not.toBeInTheDocument()
+    })
   })
 })

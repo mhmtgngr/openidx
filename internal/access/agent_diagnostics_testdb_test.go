@@ -121,3 +121,41 @@ func TestDiagnosticsKeepTheRecentFewPerDevice(t *testing.T) {
 		t.Errorf("after the sweep: %d and %d, want %d and 0", mine, theirs, diagnosticsKeptPerAgent)
 	}
 }
+
+// A "diagnose" command's answer is filed as the device's diagnostic, and an
+// answer with no readable bundle still finishes the command.
+func TestDiagnoseCommandResultIsFiledAsADiagnostic(t *testing.T) {
+	c, _, query := newContinuityHarness(t, "diag-cmd-org")
+	e := c.enrolled(c.enrol("diag-cmd-org-fleet", machine("PC-Q", "win2:diagcmd", "")))
+
+	code, id := c.queue(e.AgentID, map[string]any{"kind": "diagnose"})
+	if code != http.StatusCreated || id == "" {
+		t.Fatalf("queue answered %d", code)
+	}
+	if got := c.syncCommands(e, true); len(got) != 1 || got[0].Kind != "diagnose" {
+		t.Fatalf("delivered %v", got)
+	}
+	if code := c.result(e, id, map[string]any{"status": "done",
+		"result": map[string]any{"bundle": diagnosticBundle("not-this-agent", "DNS_FAIL")}}); code != http.StatusOK {
+		t.Fatalf("result answered %d", code)
+	}
+	var agentID, source, cause string
+	query([]any{&agentID, &source, &cause},
+		`SELECT agent_id, source, primary_cause FROM agent_diagnostics WHERE org_id = $1::uuid`, c.orgID)
+	if agentID != e.AgentID || source != "command" || cause != "DNS_FAIL" {
+		t.Errorf("row = agent %q source %q cause %q", agentID, source, cause)
+	}
+
+	_, id = c.queue(e.AgentID, map[string]any{"kind": "diagnose"})
+	c.syncCommands(e, true)
+	if code := c.result(e, id, map[string]any{"status": "done", "result": map[string]any{"bundle": map[string]any{"schema": 9}}}); code != http.StatusOK {
+		t.Fatalf("a result with an unreadable bundle answered %d", code)
+	}
+	var status string
+	var n int
+	query([]any{&status}, `SELECT status FROM agent_commands WHERE id = $1::uuid`, id)
+	query([]any{&n}, `SELECT COUNT(*) FROM agent_diagnostics`)
+	if status != "done" || n != 1 {
+		t.Errorf("command is %q and %d diagnostics are stored, want done and 1", status, n)
+	}
+}

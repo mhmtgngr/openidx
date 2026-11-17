@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, CircleHelp, TriangleAlert } from 'lucide-react'
@@ -16,8 +17,12 @@ export interface MyDiagnosis {
   agent_id?: string
   verdict: { healthy: boolean; causes: Cause[]; bundle_stale?: boolean }
   bundle_at?: string
+  bundle_requested?: boolean
   generated_at: string
 }
+
+/** How long a device gets to answer a "diagnose" command before the card asks again. */
+export const RECHECK_AFTER_MS = 40_000
 
 /**
  * "Why can't I connect?" for one of the signed-in person's own devices: the
@@ -32,6 +37,21 @@ export function WhyCantIConnect({ agentId }: { agentId?: string }) {
       api.post<MyDiagnosis>('/api/v1/access/my/diagnose', agentId ? { agent_id: agentId } : {}),
   })
   const result = diagnose.data
+
+  // When the server has just asked the device to look at itself, ask again
+  // once the device has had time to answer. Once only: a device that does not
+  // answer must not turn this card into a poll.
+  const [followedUp, setFollowedUp] = useState(false)
+  const { mutate } = diagnose
+  const asking = Boolean(result?.bundle_requested) && !followedUp
+  useEffect(() => {
+    if (!asking) return
+    const timer = setTimeout(() => {
+      setFollowedUp(true)
+      mutate()
+    }, RECHECK_AFTER_MS)
+    return () => clearTimeout(timer)
+  }, [asking, mutate])
   const words = (code: string, part: 'title' | 'action') => {
     const key = `diagnose.cause.${code}.${part}`
     return i18n.exists(key) ? t(key) : t(`diagnose.cause.UNKNOWN.${part}`)
@@ -47,7 +67,15 @@ export function WhyCantIConnect({ agentId }: { agentId?: string }) {
         <CardDescription>{t('diagnose.description')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <Button size="sm" variant="outline" onClick={() => diagnose.mutate()} disabled={diagnose.isPending}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setFollowedUp(false)
+            diagnose.mutate()
+          }}
+          disabled={diagnose.isPending}
+        >
           {diagnose.isPending ? <LoadingSpinner size="sm" /> : null}
           <span className={diagnose.isPending ? 'ml-2' : ''}>
             {diagnose.isPending ? t('diagnose.checking') : result ? t('diagnose.again') : t('diagnose.button')}
@@ -84,7 +112,10 @@ export function WhyCantIConnect({ agentId }: { agentId?: string }) {
           </ol>
         )}
 
-        {result && !diagnose.isPending && !result.bundle_at && result.agent_id && (
+        {result && !diagnose.isPending && asking && (
+          <p className="text-xs text-muted-foreground">{t('diagnose.asking')}</p>
+        )}
+        {result && !diagnose.isPending && !asking && !result.bundle_at && result.agent_id && (
           <p className="text-xs text-muted-foreground">{t('diagnose.noBundleHint')}</p>
         )}
       </CardContent>
