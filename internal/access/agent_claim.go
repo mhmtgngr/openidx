@@ -292,17 +292,7 @@ func (h *AgentAPIHandler) HandleUpdateAgentSettings(c *gin.Context) {
 	if u := c.GetString("user_id"); u != "" {
 		updatedBy = u
 	}
-	if _, err := h.db.Pool.Exec(ctx, `
-		INSERT INTO org_agent_settings (org_id, claim_mode, update_channel, update_pin_version,
-		                                update_rollout_percent, update_paused, updated_by, updated_at)
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7::uuid, NOW())
-		ON CONFLICT (org_id) DO UPDATE
-		   SET claim_mode = EXCLUDED.claim_mode, update_channel = EXCLUDED.update_channel,
-		       update_pin_version = EXCLUDED.update_pin_version,
-		       update_rollout_percent = EXCLUDED.update_rollout_percent,
-		       update_paused = EXCLUDED.update_paused,
-		       updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
-		orgID, next.ClaimMode, next.Channel, next.PinVersion, next.RolloutPercent, next.Paused, updatedBy); err != nil {
+	if err := h.saveAgentSettings(ctx, orgID, next, updatedBy); err != nil {
 		h.logger.Error("agent settings update failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save the settings"})
 		return
@@ -327,4 +317,22 @@ func (h *AgentAPIHandler) agentUnclaimed(ctx context.Context, agentID string) bo
 		return false
 	}
 	return unclaimed
+}
+
+// saveAgentSettings writes the organization's agent settings row. It is the
+// one place the row is written, so a change made by a person at the settings
+// page and one made when a person approves a proposal are the same change.
+func (h *AgentAPIHandler) saveAgentSettings(ctx context.Context, orgID string, next agentSettingsView, updatedBy interface{}) error {
+	_, err := h.db.Pool.Exec(ctx, `
+		INSERT INTO org_agent_settings (org_id, claim_mode, update_channel, update_pin_version,
+		                                update_rollout_percent, update_paused, updated_by, updated_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7::uuid, NOW())
+		ON CONFLICT (org_id) DO UPDATE
+		   SET claim_mode = EXCLUDED.claim_mode, update_channel = EXCLUDED.update_channel,
+		       update_pin_version = EXCLUDED.update_pin_version,
+		       update_rollout_percent = EXCLUDED.update_rollout_percent,
+		       update_paused = EXCLUDED.update_paused,
+		       updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+		orgID, next.ClaimMode, next.Channel, next.PinVersion, next.RolloutPercent, next.Paused, updatedBy)
+	return err
 }

@@ -185,6 +185,12 @@ func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, stepUp, a
 	r.POST("/agent/claim", h.HandleClaimAgent)
 	r.GET("/agent/settings", withGate(admin, h.HandleGetAgentSettings)...)
 	r.PUT("/agent/settings", withGate(admin, h.HandleUpdateAgentSettings)...)
+	// The rollout operator: how the update is going and the step the rules
+	// recommend. Reading is the operator's; approving a step changes the ring,
+	// which is the admin's (the same gate as PUT /agent/settings).
+	r.GET("/agent/rollout", withGate(operator, h.HandleGetRollout)...)
+	r.POST("/agent/rollout/proposals/:id/approve", withGate(admin, h.HandleApproveRolloutProposal)...)
+	r.POST("/agent/rollout/proposals/:id/reject", withGate(admin, h.HandleRejectRolloutProposal)...)
 	r.POST("/agent/enroll/session", h.HandleCreateEnrollSession)
 	r.GET("/agent/enroll/session/:id/status", h.HandleEnrollSessionStatus)
 	r.DELETE("/agent/enroll/session/:id", h.HandleCancelEnrollSession)

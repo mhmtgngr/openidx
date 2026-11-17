@@ -132,7 +132,7 @@ export interface AgenticAction {
 }
 
 const KNOWN_REASONS = ['observe_mode', 'mode_below_fix', 'anti_flap', 'kill_switch', 'queue_busy']
-const KNOWN_ACTIONS = ['restart_tunnel', 'collect_logs', 'update_agent']
+const KNOWN_ACTIONS = ['restart_tunnel', 'collect_logs', 'update_agent', 'rollout_pause']
 
 /**
  * How far the platform may fix devices by itself, the kill switch, and what it

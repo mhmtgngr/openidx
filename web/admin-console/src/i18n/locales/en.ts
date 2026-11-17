@@ -8586,6 +8586,44 @@ const en = {
     // severities and enforcement actions, and the `device-trusted` Ziti role
     // attribute the tier badge names.
     agentFleet: {
+      rollout: {
+        title: 'Rollout assistant',
+        description: 'Watches the agent update and says what the next step is. The rules decide; widening the rollout always waits for an administrator.',
+        target: 'Target version',
+        targetNone: 'No target yet — mirror a release on the box or pin a version.',
+        counts: '{{onTarget}} of {{inRing}} devices in the rollout are on the target; {{behind}} behind, {{failed}} failed, {{offline}} offline.',
+        status: {
+          no_target: 'No target',
+          paused: 'Paused',
+          unhealthy: 'Failing',
+          soaking: 'Waiting',
+          ready: 'Ready for the next step',
+          complete: 'Complete',
+        },
+        reason: {
+          NO_TARGET: 'There is no target version to compare against.',
+          PAUSED: 'The rollout is paused.',
+          FAILURES: 'Too many devices failed to update.',
+          SOAKING: 'The ring changed recently; giving it time before judging.',
+          APPLYING: 'Some devices are installing the update now.',
+          WAITING_ON_DEVICES: 'Waiting for more devices to update.',
+          READY: 'The ring is healthy and most devices are on the target.',
+          EMPTY_RING: 'No device is in this ring yet.',
+          ALL_ON_TARGET: 'Every device that is online is on the target.',
+          OFFLINE_IGNORED: 'Devices that are offline are not waited for.',
+        },
+        proposal: {
+          rollout_pause: 'Pause the rollout',
+          rollout_advance: 'Widen the rollout to {{percent}}% of the fleet',
+        },
+        approve: 'Approve',
+        dismiss: 'Dismiss',
+        approved: 'Applied',
+        dismissed: 'Dismissed',
+        stale: 'This step no longer applies; the rollout has moved.',
+        failed: 'Could not apply the step',
+        none: 'Nothing to decide right now.',
+      },
       agentic: {
         title: 'Automatic fixes',
         description: 'How far OpenIDX may fix a device on its own when the device reports a problem. Fixes only restart or update the agent; they never change what a device may reach.',
@@ -8605,7 +8643,7 @@ const en = {
         none: 'Nothing yet.',
         outcome: { observed: 'would do', applied: 'applied', suppressed: 'held back' },
         reason: { observe_mode: 'observe mode', mode_below_fix: 'mode too low', anti_flap: 'tried twice today', kill_switch: 'kill switch', queue_busy: 'device is busy' },
-        action: { restart_tunnel: 'restart the agent', collect_logs: 'collect logs', update_agent: 'update the agent' },
+        action: { restart_tunnel: 'restart the agent', collect_logs: 'collect logs', update_agent: 'update the agent', rollout_pause: 'pause the agent rollout' },
         assistant: {
           title: 'Assistant',
           description: 'The model that explains a device\'s problem in plain words. It only narrates: which cause applies is always decided by rules. With "None" the assistant answers from the built-in wording and no model is called.',

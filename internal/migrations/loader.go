@@ -1854,5 +1854,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agenticChatUp,
 			DownSQL:     agenticChatDown,
 		},
+		{
+			Version:     262,
+			Name:        "agentic_proposals",
+			Description: "Proposals the platform makes and a person decides. agentic_proposals holds a step the rollout operator recommends but may not take on its own (widening an update ring, or pausing one when automation is not allowed to): bound to the state it was drawn from, good for a few hours, decided once (applied, rejected, expired, superseded), and at most one pending per kind per organization. Org-scoped under FORCE RLS.",
+			UpSQL:       agenticProposalsUp,
+			DownSQL:     agenticProposalsDown,
+		},
 	}
 }
