@@ -470,6 +470,18 @@ const tr: typeof en = {
   // "Why can't I connect?" (components/why-cant-i-connect.tsx). The cause codes
   // are the rule engine's (internal/diagnose/causes.go); a Go test there checks
   // that every one of them has words here, in every locale.
+  operatorAssistant: {
+    title: 'Operasyon asistanı',
+    description: 'Ajan dağıtımını sorun veya bir gruba erişim açılmasını isteyin. Bir şeyleri araştırabilir ve plan çıkarabilir; her değişikliği yine bir yönetici onaylar.',
+    placeholder: 'Örneğin: güncelleme nasıl gidiyor? Wiki\'yi Mühendislik grubuna aç.',
+    send: 'Gönder',
+    thinking: 'Düşünüyor…',
+    you: 'Siz',
+    assistant: 'Asistan',
+    unavailable: 'Asistan şu anda yanıt veremedi.',
+    tooMany: 'Kısa sürede çok fazla soru sordunuz. Birkaç dakika sonra tekrar deneyin.',
+    failed: 'Soru gönderilemedi. Birazdan tekrar deneyin.',
+  },
   accessPlans: {
     title: 'Plan ile erişim aç',
     description: 'Hangi uygulamanın hangi gruba açılacağını söyleyin. Bir şey değişmeden önce tam olarak ne değişeceğini görürsünüz; bir yönetici onaylar ve geri alınabilir.',

@@ -6620,6 +6620,50 @@ paths:
         '429':
           description: Too many questions in a short time
 
+  /api/v1/access/assist/operator/messages:
+    post:
+      tags: [Agent Fleet]
+      summary: Ask the operations assistant about the agent rollout or about opening access (operator)
+      description: >
+        Needs a model chosen for the organization (otherwise the answer says no
+        model took part). The model may look at the rollout and at the
+        organization's applications and groups and may lay out a plan to open an
+        application to a group, which an administrator then approves; it cannot
+        change anything. Conversations are kept on the server for 30 days and
+        belong to the person who started them; the same per-person question
+        limit as the device assistant applies.
+      operationId: operatorAssistMessage
+      x-openidx-handler: internal/access.(*Service).handleOperatorAssist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: {type: string, maxLength: 2000}
+                session_id: {type: string, description: 'Continue this conversation'}
+                lang: {type: string, enum: [en, tr]}
+      responses:
+        '200':
+          description: The assistant's reply, when a model answered
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          description: Too many questions in a short time
+
   /api/v1/access/plans:
     post:
       tags: [Agent Fleet]

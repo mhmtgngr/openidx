@@ -28,6 +28,8 @@ type diagnoseHarness struct {
 	router *gin.Engine
 	as     *string
 	svc    *Service
+	// roles are the caller's role names, for the routes that look at them.
+	roles []string
 }
 
 func newDiagnoseHarness(t *testing.T, slug string) (*diagnoseHarness, string, string) {
@@ -71,10 +73,14 @@ func newDiagnoseHarness(t *testing.T, slug string) (*diagnoseHarness, string, st
 	api := h.router.Group("/api/v1/access", func(c *gin.Context) {
 		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: h.orgID}))
 		c.Set("user_id", *h.as)
+		if h.roles != nil {
+			c.Set("roles", h.roles)
+		}
 		c.Next()
 	})
 	api.POST("/my/diagnose", s.handleMyDiagnose)
 	api.POST("/my/assist/messages", s.handleAssistMessage)
+	api.POST("/assist/operator/messages", s.handleOperatorAssist)
 	return h, ada, bo
 }
 

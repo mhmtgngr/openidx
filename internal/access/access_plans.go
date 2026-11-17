@@ -177,40 +177,27 @@ func viewOf(f accessplan.Facts, p accessplan.Plan) accessPlanView {
 	}
 }
 
-// handleCreateAccessPlan is POST /access/plans (operator): lay out a plan to
-// open a resource to a group. Nothing changes. A plan that is ready is stored
-// for an administrator to decide; one that is not needed or cannot be done is
-// returned and not stored.
-func (s *Service) handleCreateAccessPlan(c *gin.Context) {
-	var body struct {
-		Resource string `json:"resource"`
-		Group    string `json:"group"`
+// proposeAccessPlan lays out a plan and, when it is ready, stores it for an
+// administrator to decide. It is the one place plans are made: the operator's
+// request and the assistant's tool both come here. It returns the plan and the
+// status the API answers with: 201 stored, 200 nothing to do, 422 cannot be
+// done, 409 an ambiguous name; any other error is the caller's 500.
+func (s *Service) proposeAccessPlan(ctx context.Context, orgID, resource, group string, audit func(action, targetID string, details map[string]interface{})) (accessPlanView, int, error) {
+	f, err := s.planFacts(ctx, orgID, resource, group)
+	if errors.Is(err, errAmbiguous) {
+		return accessPlanView{}, http.StatusConflict, err
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.Resource == "" || body.Group == "" || len(body.Resource) > 255 || len(body.Group) > 255 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name the resource and the group, each by name or id"})
-		return
-	}
-	ctx := c.Request.Context()
-	orgID := orgIDFrom(ctx)
-	f, err := s.planFacts(ctx, orgID, body.Resource, body.Group)
-	switch {
-	case errors.Is(err, errAmbiguous):
-		c.JSON(http.StatusConflict, gin.H{"error": "that name matches more than one; use the id"})
-		return
-	case err != nil:
-		s.logger.Error("access plan: facts failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read what the plan needs"})
-		return
+	if err != nil {
+		return accessPlanView{}, http.StatusInternalServerError, err
 	}
 	plan := accessplan.PlanOpenAccess(f)
 	view := viewOf(f, plan)
-	if plan.Status != accessplan.StatusReady {
-		code := http.StatusOK
-		if plan.Status == accessplan.StatusBlocked {
-			code = http.StatusUnprocessableEntity
-		}
-		c.JSON(code, view)
-		return
+	switch plan.Status {
+	case accessplan.StatusBlocked:
+		return view, http.StatusUnprocessableEntity, nil
+	case accessplan.StatusReady:
+	default:
+		return view, http.StatusOK, nil
 	}
 	view.Now = s.memberCheck(ctx, orgID, f)
 	params, _ := json.Marshal(map[string]string{
@@ -229,32 +216,56 @@ func (s *Service) handleCreateAccessPlan(c *gin.Context) {
 		RETURNING id::text, created_at, expires_at`,
 		orgID, target, string(params), string(reasons), planHash(f), accessPlanLife.Seconds()).Scan(&id, &created, &expires)
 	if err != nil {
-		s.logger.Error("access plan: could not store", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store the plan"})
-		return
+		return accessPlanView{}, http.StatusInternalServerError, err
 	}
 	view.ID, view.Status, view.CreatedAt, view.ExpiresAt = id, "pending", &created, &expires
-	s.logAuditEvent(c, "access.plan.proposed", f.ResourceID, "application", map[string]interface{}{
-		"group_id": f.GroupID, "plan": id, "risks": plan.Risks,
-	})
-	c.JSON(http.StatusCreated, view)
+	if audit != nil {
+		audit("access.plan.proposed", f.ResourceID, map[string]interface{}{"group_id": f.GroupID, "plan": id, "risks": plan.Risks})
+	}
+	return view, http.StatusCreated, nil
 }
 
-// handleListAccessPlans is GET /access/plans (operator): the plans waiting for
-// a decision and the ones decided in the last week.
-func (s *Service) handleListAccessPlans(c *gin.Context) {
+// handleCreateAccessPlan is POST /access/plans (operator): lay out a plan to
+// open a resource to a group. Nothing changes. A plan that is ready is stored
+// for an administrator to decide; one that is not needed or cannot be done is
+// returned and not stored.
+func (s *Service) handleCreateAccessPlan(c *gin.Context) {
+	var body struct {
+		Resource string `json:"resource"`
+		Group    string `json:"group"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Resource == "" || body.Group == "" || len(body.Resource) > 255 || len(body.Group) > 255 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name the resource and the group, each by name or id"})
+		return
+	}
 	ctx := c.Request.Context()
+	view, status, err := s.proposeAccessPlan(ctx, orgIDFrom(ctx), body.Resource, body.Group,
+		func(action, target string, details map[string]interface{}) {
+			s.logAuditEvent(c, action, target, "application", details)
+		})
+	switch {
+	case errors.Is(err, errAmbiguous):
+		c.JSON(http.StatusConflict, gin.H{"error": "that name matches more than one; use the id"})
+	case err != nil:
+		s.logger.Error("access plan: could not be made", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to make the plan"})
+	default:
+		c.JSON(status, view)
+	}
+}
+
+// accessPlanViews lists the plans waiting for a decision and the ones decided
+// in the last week.
+func (s *Service) accessPlanViews(ctx context.Context, orgID string) ([]accessPlanView, error) {
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id::text, status, params, reasons, outcome, created_at, expires_at
 		  FROM agentic_proposals
 		 WHERE org_id = $1 AND kind = 'access_open'
 		   AND ((status = 'pending' AND expires_at > NOW())
 		        OR (status IN ('applied', 'rejected', 'undone') AND COALESCE(decided_at, created_at) > NOW() - INTERVAL '7 days'))
-		 ORDER BY created_at DESC LIMIT 100`, orgIDFrom(ctx))
+		 ORDER BY created_at DESC LIMIT 100`, orgID)
 	if err != nil {
-		s.logger.Error("access plans: list failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list the plans"})
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	out := []accessPlanView{}
@@ -263,8 +274,7 @@ func (s *Service) handleListAccessPlans(c *gin.Context) {
 		var params, reasons []byte
 		var created, expires time.Time
 		if err := rows.Scan(&v.ID, &v.Status, &params, &reasons, &v.Outcome, &created, &expires); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list the plans"})
-			return
+			return nil, err
 		}
 		var p map[string]string
 		_ = json.Unmarshal(params, &p)
@@ -279,7 +289,19 @@ func (s *Service) handleListAccessPlans(c *gin.Context) {
 		v.CreatedAt, v.ExpiresAt = &created, &expires
 		out = append(out, v)
 	}
-	c.JSON(http.StatusOK, gin.H{"plans": out})
+	return out, rows.Err()
+}
+
+// handleListAccessPlans is GET /access/plans (operator).
+func (s *Service) handleListAccessPlans(c *gin.Context) {
+	ctx := c.Request.Context()
+	plans, err := s.accessPlanViews(ctx, orgIDFrom(ctx))
+	if err != nil {
+		s.logger.Error("access plans: list failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list the plans"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"plans": plans})
 }
 
 // loadPendingPlan reads the plan an administrator is deciding on.

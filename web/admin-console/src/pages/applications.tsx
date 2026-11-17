@@ -41,6 +41,7 @@ import { ManageAppAccessDialog } from '../components/manage-app-access-dialog'
 import { AppConditionsDialog } from '../components/app-conditions-dialog'
 import { PublishToVendorDialog } from '../components/publish-to-vendor-dialog'
 import { AccessPlansSection } from '../components/access-plans-section'
+import { OperatorAssistantCard } from '../components/operator-assistant-card'
 
 interface Application {
   id: string
@@ -1042,6 +1043,8 @@ export function ApplicationsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <OperatorAssistantCard />
 
       <AccessPlansSection />
 

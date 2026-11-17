@@ -28,6 +28,8 @@ func toolbox(ran *[]string) *Registry {
 		InputSchema: schema, Run: note("fleet", "ok")})
 	r.Register(Tool{Name: "restart_device", Description: "d", Tier: TierSafeFix, Audience: AudienceUser,
 		InputSchema: schema, Scope: ScopeDevice("agent_id"), Run: note("restart_device", "restarting")})
+	r.Register(Tool{Name: "propose_it", Description: "d", Tier: TierPropose, Audience: AudienceOperator,
+		InputSchema: schema, Run: note("propose_it", "proposed")})
 	r.Register(Tool{Name: "reinstate", Description: "d", Tier: TierApproval, Audience: AudienceOperator,
 		InputSchema: schema, Run: note("reinstate", "done")})
 	return r
@@ -57,6 +59,9 @@ func TestDispatchRefusesWhatThePrincipalMayNotDo(t *testing.T) {
 		{"a fix while only observing", "observe", "restart_device", `{"agent_id":"ada-pc"}`, ada, "not enabled"},
 		{"a fix when fixes are on", "tier0", "restart_device", `{"agent_id":"ada-pc"}`, ada, ""},
 		{"a fix on someone else's device", "tier0", "restart_device", `{"agent_id":"bo-pc"}`, ada, "not yours"},
+		{"a proposal is something an operator's model may make while observing", "observe", "propose_it", `{}`, Principal{OrgID: "o", Operator: true}, ""},
+		{"a proposal is not for a user", "observe", "propose_it", `{}`, ada, "not available"},
+		{"a proposal needs the assistant on", "off", "propose_it", `{}`, Principal{OrgID: "o", Operator: true}, "switched off"},
 		{"an approval tool is never run by a model", "tier1", "reinstate", `{}`, Principal{OrgID: "o", Operator: true}, "approval"},
 		{"anything when off", "off", "my_device", `{}`, ada, "switched off"},
 		{"an unknown tool", "tier1", "rm_rf", `{}`, ada, "no such tool"},
@@ -127,7 +132,10 @@ func TestSpecsListOnlyWhatMayRun(t *testing.T) {
 	if got := names(ada, "tier0"); got != "my_device,restart_device" {
 		t.Errorf("a user with fixes sees %q", got)
 	}
-	if got := names(Principal{Operator: true}, "tier1"); got != "fleet,my_device,restart_device" {
+	if got := names(Principal{Operator: true}, "observe"); got != "fleet,my_device,propose_it" {
+		t.Errorf("an operator observing sees %q", got)
+	}
+	if got := names(Principal{Operator: true}, "tier1"); got != "fleet,my_device,propose_it,restart_device" {
 		t.Errorf("an operator sees %q (never the approval tool)", got)
 	}
 	if got := names(ada, "off"); got != "" {

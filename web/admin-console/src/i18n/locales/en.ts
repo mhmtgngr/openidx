@@ -473,6 +473,18 @@ const en = {
   // "Why can't I connect?" (components/why-cant-i-connect.tsx). The cause codes
   // are the rule engine's (internal/diagnose/causes.go); a Go test there checks
   // that every one of them has words here, in every locale.
+  operatorAssistant: {
+    title: 'Operations assistant',
+    description: 'Ask about the agent rollout, or ask for access to be opened to a group. It can look things up and lay out a plan; an administrator still approves every change.',
+    placeholder: 'For example: how is the update going? Open the wiki to Engineering.',
+    send: 'Send',
+    thinking: 'Thinking…',
+    you: 'You',
+    assistant: 'Assistant',
+    unavailable: 'The assistant could not answer just now.',
+    tooMany: 'You have asked a lot of questions in a short time. Try again in a few minutes.',
+    failed: 'The question could not be sent. Try again in a moment.',
+  },
   accessPlans: {
     title: 'Open access with a plan',
     description: 'Say which application should be open to which group. You see exactly what would change before anything does; an administrator approves it, and it can be undone.',

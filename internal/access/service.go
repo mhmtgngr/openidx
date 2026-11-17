@@ -680,6 +680,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// (my_diagnose.go).
 		api.POST("/my/diagnose", svc.handleMyDiagnose)
 		api.POST("/my/assist/messages", svc.handleAssistMessage)
+		api.POST("/assist/operator/messages", operatorTier, svc.handleOperatorAssist)
 		api.POST("/diagnose/decode", operatorTier, svc.handleDecodeSupportCode)
 		// Access plans: open an application to a group, laid out by the rules,
 		// proposed by an operator, decided and carried out by an administrator.

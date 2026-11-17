@@ -19,6 +19,11 @@ const (
 	// TierSafeFix changes one device in a reversible way: the fixes the rule
 	// engine marks safe.
 	TierSafeFix Tier = "safe_fix"
+	// TierPropose lays out a change and stores it for a person to decide; it
+	// changes nothing itself. It is what a model may do about a step that needs
+	// approval: ask for it, in a form an administrator can read, approve or
+	// dismiss.
+	TierPropose Tier = "propose"
 	// TierApproval changes access, policy or the network. A model never runs
 	// one itself; it can only ask a person.
 	TierApproval Tier = "needs_approval"
@@ -126,7 +131,7 @@ func (r *Registry) Register(t Tool) {
 	switch {
 	case t.Name == "" || t.Run == nil || len(t.InputSchema) == 0:
 		panic("agentic: a tool needs a name, a schema and a Run")
-	case t.Tier != TierRead && t.Tier != TierSafeFix && t.Tier != TierApproval:
+	case t.Tier != TierRead && t.Tier != TierSafeFix && t.Tier != TierPropose && t.Tier != TierApproval:
 		panic("agentic: tool " + t.Name + " has no tier")
 	case t.Audience != AudienceUser && t.Audience != AudienceOperator:
 		panic("agentic: tool " + t.Name + " has no audience")
@@ -145,7 +150,7 @@ func allowed(t Tool, p Principal, mode string) (bool, string) {
 		return false, "not available to you"
 	}
 	switch t.Tier {
-	case TierRead:
+	case TierRead, TierPropose:
 		return mode != "off", "assistant is switched off"
 	case TierSafeFix:
 		return mode == "tier0" || mode == "tier1", "fixes are not enabled for this organization"
