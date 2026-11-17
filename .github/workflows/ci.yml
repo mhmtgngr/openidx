@@ -367,7 +367,13 @@ jobs:
   rls-isolation:
     name: Tenant isolation (RLS_MODE=session and local)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Twenty, not ten: this job compiles and runs two dozen named suites in
+    # series, and on a slow runner the sum passes ten minutes while every step
+    # is succeeding (2026-11-17: three pull requests in a row were cancelled at
+    # 10m05s with the last step "cancelled", not failed -- the "DSN role bypasses
+    # RLS" lines in that log are the NEGATIVE CONTROL passing, not the failure).
+    # The ceiling is for a hung suite, not for the sum of the healthy ones.
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
