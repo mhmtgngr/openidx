@@ -325,7 +325,10 @@ jobs:
           $msi = Get-ChildItem art -Recurse -Filter 'OpenIDX-*.msi' | Select-Object -First 1
           $exe = Get-ChildItem art -Recurse -Filter 'openidx-agent.exe' | Select-Object -First 1
           if (-not $msi -or -not $exe) { throw 'artifact has no MSI or exe' }
-          $ver = [version](($msi.BaseName -replace '^OpenIDX-', '') -replace '-.*$', '')
+          # The registry carries the release string as built, pre-release
+          # suffix included (0.6.0-beta.3); $ver is the numeric part only.
+          $full = $msi.BaseName -replace '^OpenIDX-', ''
+          $ver = [version]($full -replace '-.*$', '')
           $next = "{0}.{1}.{2}" -f $ver.Major, $ver.Minor, ($ver.Build + 1)
           $next_msi = Join-Path $env:RUNNER_TEMP "OpenIDX-$next.msi"
           # The upgrade MSI must ship the same payload as the one it replaces.
@@ -377,7 +380,7 @@ jobs:
           Run-Msi @('/i', "`"$($msi.FullName)`"", 'SERVER_URL=https://openidx.invalid', "ENROLL_TOKEN=$token") $log1
           Wait-Running
           $reg = (Get-ItemProperty 'HKLM:\SOFTWARE\OpenIDX\Agent').Version
-          if ($reg -ne "$ver") { throw "registry Version is '$reg', expected $ver" }
+          if ($reg -ne $full) { throw "registry Version is '$reg', expected $full" }
           if (Select-String -Path $log1 -SimpleMatch $token -Quiet) { throw 'the enrollment token appears in the verbose MSI log' }
           if (-not (Test-Path $data)) { throw "$data was not created" }
           'marker' | Set-Content (Join-Path $data 'smoke-marker.txt')
