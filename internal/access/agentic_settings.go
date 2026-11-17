@@ -249,6 +249,10 @@ func (s *Service) handlePutAgenticSettings(c *gin.Context) {
 	}
 	switch next.Provider {
 	case provider.KindAnthropic:
+		// The cloud model is always reached at Anthropic's own address. An
+		// address kept from an earlier choice would never be used, and must
+		// not be able to become the place a key is sent.
+		next.BaseURL = ""
 		if next.Redaction == "off" {
 			bad("masking cannot be off for a model in someone else's cloud")
 			return
