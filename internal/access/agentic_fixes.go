@@ -84,23 +84,31 @@ func (h *AgentAPIHandler) runAutoFixes(ctx context.Context, agentID, diagnosticI
 		}
 		var applied int
 		if _, ok := autoFixes[f.Action]; ok {
-			_ = h.db.Pool.QueryRow(ctx, `
+			// If the ledger cannot be read, nothing is applied: the allowance
+			// cannot be checked, so the fix is left for a person.
+			if err := h.db.Pool.QueryRow(ctx, `
 				SELECT count(*) FROM agentic_actions
 				 WHERE org_id = $1 AND agent_id = $2 AND action = $3
 				   AND outcome = 'applied' AND created_at > NOW() - INTERVAL '24 hours'`,
-				orgID, agentID, f.Action).Scan(&applied)
+				orgID, agentID, f.Action).Scan(&applied); err != nil {
+				h.logger.Warn("agentic: ledger unreadable, holding the fix", zap.Error(err))
+				continue
+			}
 		}
 		outcome, reason := decideFix(set.Effective, set.KillSwitch, f.Action, applied)
 		if outcome == "" {
 			continue
 		}
 		var already bool
-		_ = h.db.Pool.QueryRow(ctx, `
+		if err := h.db.Pool.QueryRow(ctx, `
 			SELECT EXISTS (SELECT 1 FROM agentic_actions
 			                WHERE org_id = $1 AND agent_id = $2 AND action = $3
 			                  AND outcome = $4 AND reason = $5
 			                  AND created_at > NOW() - make_interval(secs => $6))`,
-			orgID, agentID, f.Action, outcome, reason, ledgerQuiet.Seconds()).Scan(&already)
+			orgID, agentID, f.Action, outcome, reason, ledgerQuiet.Seconds()).Scan(&already); err != nil {
+			h.logger.Warn("agentic: ledger unreadable, holding the fix", zap.Error(err))
+			continue
+		}
 		if already {
 			continue
 		}
