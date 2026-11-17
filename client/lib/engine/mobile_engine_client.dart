@@ -151,6 +151,11 @@ class MobileEngineClient implements EngineClient {
   }
 
   @override
+  Future<DoctorReport> doctor({String? lang, bool fix = false}) =>
+      Future<DoctorReport>.error(const EngineException(
+          0, 'the connection doctor is not available on this device'));
+
+  @override
   Future<List<PamEntry>> pamList() async {
     await _ensureStarted();
     final json = await _guard(_engine.pamList, 'pamList');

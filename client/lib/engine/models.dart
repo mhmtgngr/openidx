@@ -345,3 +345,104 @@ class PamConnectResult {
   /// back to the generic `url` field.
   String get launchTarget => connectUrl.isNotEmpty ? connectUrl : url;
 }
+
+
+/// One check of `GET /doctor`, labelled and, when it did not pass, explained.
+class DoctorItem {
+  const DoctorItem({
+    required this.check,
+    required this.label,
+    required this.status,
+    this.code = '',
+    this.title = '',
+    this.action = '',
+  });
+
+  /// The check's id (config, dns, tcp, tls, tunnel, ...).
+  final String check;
+  final String label;
+
+  /// `pass`, `warn`, `fail` or `skipped`.
+  final String status;
+  final String code;
+
+  /// What is wrong and what to do about it, in the language asked for. Empty
+  /// for a check that passed or was skipped.
+  final String title;
+  final String action;
+
+  bool get failed => status == 'fail';
+  bool get warned => status == 'warn';
+
+  factory DoctorItem.fromJson(Map<String, dynamic> json) => DoctorItem(
+        check: _asString(json['check']),
+        label: _asString(json['label']),
+        status: _asString(json['status']),
+        code: _asString(json['code']),
+        title: _asString(json['title']),
+        action: _asString(json['action']),
+      );
+}
+
+/// A repair the doctor tried, and what became of it.
+class DoctorRepair {
+  const DoctorRepair({
+    required this.id,
+    required this.label,
+    required this.outcome,
+    required this.result,
+  });
+
+  final String id;
+  final String label;
+
+  /// `applied`, `needs_elevation`, `failed` or `planned`.
+  final String outcome;
+  final String result;
+
+  factory DoctorRepair.fromJson(Map<String, dynamic> json) => DoctorRepair(
+        id: _asString(json['id']),
+        label: _asString(json['label']),
+        outcome: _asString(json['outcome']),
+        result: _asString(json['result']),
+      );
+}
+
+/// `GET /doctor` and `POST /doctor/repair`: why this device cannot connect.
+///
+/// The verdict is the agent's own, from checks it ran on the device; the
+/// wording is the agent's too, so this client only draws it. The raw bundle
+/// the agent also returns is not kept: nothing here needs it.
+class DoctorReport {
+  const DoctorReport({
+    required this.healthy,
+    required this.supportCode,
+    required this.items,
+    required this.repairs,
+  });
+
+  final bool healthy;
+
+  /// A short code (OX1-...) a person can read to support, carrying the failing
+  /// checks and nothing about the device.
+  final String supportCode;
+  final List<DoctorItem> items;
+  final List<DoctorRepair> repairs;
+
+  /// The checks that failed or warned, in the order they ran.
+  List<DoctorItem> get problems =>
+      items.where((i) => i.failed || i.warned).toList(growable: false);
+
+  factory DoctorReport.fromJson(Map<String, dynamic> json) {
+    List<T> list<T>(Object? raw, T Function(Map<String, dynamic>) make) =>
+        raw is List
+            ? raw.whereType<Map<String, dynamic>>().map(make).toList(growable: false)
+            : <T>[];
+    return DoctorReport(
+      healthy: _asBool(json['healthy']),
+      supportCode: _asString(json['support_code']),
+      items: list(json['items'], DoctorItem.fromJson),
+      repairs: list(json['repairs'], DoctorRepair.fromJson),
+    );
+  }
+}

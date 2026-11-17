@@ -355,6 +355,16 @@ class DesktopEngineClient implements EngineClient {
       Posture.fromJson(_asMap(await _send('GET', '/posture'), '/posture'));
 
   @override
+  Future<DoctorReport> doctor({String? lang, bool fix = false}) async {
+    final query = lang == null || lang.isEmpty
+        ? ''
+        : '?lang=${Uri.encodeQueryComponent(lang)}';
+    final route = fix ? '/doctor/repair' : '/doctor';
+    return DoctorReport.fromJson(
+        _asMap(await _send(fix ? 'POST' : 'GET', '$route$query'), route));
+  }
+
+  @override
   Future<List<PamEntry>> pamList() async {
     final raw = await _send('GET', '/pam/entries');
     if (raw is! List) {
