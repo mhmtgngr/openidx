@@ -1861,5 +1861,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agenticProposalsUp,
 			DownSQL:     agenticProposalsDown,
 		},
+		{
+			Version:     263,
+			Name:        "access_plans",
+			Description: "Access plans. agentic_proposals gains the kind access_open (open an application to a group: a step the platform lays out, an administrator approves and the platform carries out), an outcome column (whether the grant was made and what the check afterwards found, which an undo needs) and the status undone. Pending uniqueness moves from per kind to per target, since an organization may have many plans open but one pending step per ring.",
+			UpSQL:       accessPlansUp,
+			DownSQL:     accessPlansDown,
+		},
 	}
 }

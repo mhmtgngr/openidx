@@ -681,6 +681,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/my/diagnose", svc.handleMyDiagnose)
 		api.POST("/my/assist/messages", svc.handleAssistMessage)
 		api.POST("/diagnose/decode", operatorTier, svc.handleDecodeSupportCode)
+		// Access plans: open an application to a group, laid out by the rules,
+		// proposed by an operator, decided and carried out by an administrator.
+		api.POST("/plans", operatorTier, svc.handleCreateAccessPlan)
+		api.GET("/plans", operatorTier, svc.handleListAccessPlans)
+		api.POST("/plans/:id/approve", adminOnly, svc.handleApproveAccessPlan)
+		api.POST("/plans/:id/reject", adminOnly, svc.handleRejectAccessPlan)
+		api.POST("/plans/:id/undo", adminOnly, svc.handleUndoAccessPlan)
 		api.GET("/agentic/settings", operatorTier, svc.handleGetAgenticSettings)
 		api.PUT("/agentic/settings", adminOnly, svc.handlePutAgenticSettings)
 		api.GET("/agentic/actions", operatorTier, svc.handleListAgenticActions)

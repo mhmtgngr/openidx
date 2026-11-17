@@ -470,6 +470,48 @@ const tr: typeof en = {
   // "Why can't I connect?" (components/why-cant-i-connect.tsx). The cause codes
   // are the rule engine's (internal/diagnose/causes.go); a Go test there checks
   // that every one of them has words here, in every locale.
+  accessPlans: {
+    title: 'Plan ile erişim aç',
+    description: 'Hangi uygulamanın hangi gruba açılacağını söyleyin. Bir şey değişmeden önce tam olarak ne değişeceğini görürsünüz; bir yönetici onaylar ve geri alınabilir.',
+    resource: 'Uygulama (ad veya kimlik)',
+    group: 'Grup (ad veya kimlik)',
+    plan: 'Plan yap',
+    planning: 'Planlanıyor…',
+    step: '"{{group}}" grubuna "{{resource}}" erişimi ver',
+    members: 'Grupta {{count}} kişi var',
+    now: {
+      allowed: 'Bugün bu grubun bir üyesi zaten açabiliyor.',
+      blocked: 'Bugün bu grubun bir üyesi açamıyor: {{why}}',
+      none: 'Grubun denenecek kimsesi yok.',
+    },
+    after: {
+      allowed: 'Değişiklikten sonra denendi: grubun bir üyesi açabiliyor.',
+      blocked: 'Değişiklikten sonra denendi: grubun bir üyesi hâlâ açamıyor: {{why}}',
+      none: 'Grubun denenecek kimsesi yok.',
+    },
+    pending: 'Bir yönetici bekleniyor',
+    recent: 'Son planlar',
+    approve: 'Onayla ve uygula',
+    dismiss: 'Vazgeç',
+    undo: 'Geri al',
+    status: { pending: 'Bekliyor', applied: 'Uygulandı', rejected: 'Vazgeçildi', undone: 'Geri alındı', noop: 'Yapılacak bir şey yok', blocked: 'Yapılamaz' },
+    approved: 'Uygulandı',
+    dismissed: 'Vazgeçildi',
+    undone: 'Geri alındı',
+    stale: 'Bu plan artık geçerli değil; bir şey değişti.',
+    failed: 'İstek başarısız oldu',
+    ambiguous: 'Bu ad birden fazlasıyla eşleşiyor; kimliği kullanın.',
+    none: 'Henüz plan yok.',
+    code: {
+      RESOURCE_NOT_FOUND: 'Bu kuruluşta böyle bir uygulama yok.',
+      GROUP_NOT_FOUND: 'Bu kuruluşta böyle bir grup yok.',
+      RESOURCE_DISABLED: 'Uygulama kapalı; bir gruba açmak hiçbir şeyi değiştirmez.',
+      ALREADY_GRANTED: 'Bu grubun zaten erişimi var; yapılacak bir şey yok.',
+      EMPTY_GROUP: 'Grupta üye yok, bu yüzden henüz kimse erişim kazanmıyor.',
+      WIDE_GROUP: 'Bu grup kuruluşun yaklaşık yarısı veya daha fazlası: uygulama geniş bir kitleye açılıyor.',
+      PRIVILEGED_RESOURCE: 'Bu ayrıcalıklı bir kaynak. Grubun buna sahip olması gerektiğini kontrol edin.',
+    },
+  },
   diagnose: {
     title: 'Neden bağlanamıyorum?',
     description: 'Cihazınızı denetleyin; sorunun ne olduğunu ve ne yapmanız gerektiğini görün.',
