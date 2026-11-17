@@ -44,6 +44,29 @@ type AssistReply struct {
 	Degraded  bool `json:"degraded,omitempty"`
 }
 
+// agenticPrincipal is who is asking, from the authenticated request: the
+// organization, the person, whether they are an operator and which devices are
+// theirs. It is the only place a Principal is made.
+func (s *Service) agenticPrincipal(c *gin.Context) (agentic.Principal, error) {
+	ctx := c.Request.Context()
+	p := agentic.Principal{OrgID: orgIDFrom(ctx), UserID: c.GetString("user_id")}
+	if p.OrgID == "" || p.UserID == "" {
+		return p, errors.New("no organization or user on the request")
+	}
+	p.Operator = (s.config != nil && s.config.DevAdminBypass) ||
+		callerTierRank(pamCallerRoles(c), false) >= quickLinkRank("operator")
+	devices, err := s.collectUserDevices(ctx, p.OrgID, p.UserID)
+	if err != nil {
+		return p, err
+	}
+	for _, d := range devices {
+		if d.Ziti != nil {
+			p.DeviceIDs = append(p.DeviceIDs, d.Ziti.AgentID)
+		}
+	}
+	return p, nil
+}
+
 // assistantAvailable says whether this organization has chosen a model and the
 // assistant is not switched off or stopped.
 func assistantAvailable(set agenticSettings) bool {
