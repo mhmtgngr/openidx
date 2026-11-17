@@ -1938,6 +1938,8 @@ func (h *AgentAPIHandler) StartGracePeriodEnforcer(ctx context.Context, interval
 				h.sweepSilentDevices(ctx)
 				h.expireAgentCommands(ctx)
 				h.expireAgentDiagnostics(ctx)
+				h.expireAgenticActions(ctx)
+				h.expireAssistSessions(ctx)
 			}
 		}
 	}()

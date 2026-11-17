@@ -483,6 +483,17 @@ const en = {
     healthy: 'No problem found.',
     healthyHint: 'Your device is registered, reporting and allowed on the network. If one application still does not open, tell IT which one.',
     asking: 'Your device is checking itself now. This answer will refresh on its own in about half a minute.',
+    assist: {
+      title: 'Ask the assistant',
+      placeholder: 'Ask about your connection…',
+      send: 'Send',
+      thinking: 'Thinking…',
+      you: 'You',
+      assistant: 'Assistant',
+      unavailable: 'The assistant could not answer just now. The result above is still correct.',
+      tooMany: 'You have asked a lot of questions in a short time. Try again in a few minutes.',
+      failed: 'The question could not be sent. Try again in a moment.',
+    },
     noBundleHint: 'This answer comes from what the server knows. For a more exact one, open the OpenIDX tray icon on the device and choose "Why can\'t I connect?", or run `openidx-agent doctor` there.',
     cause: {
       DEVICE_REVOKED: {
@@ -8575,6 +8586,41 @@ const en = {
     // severities and enforcement actions, and the `device-trusted` Ziti role
     // attribute the tier badge names.
     agentFleet: {
+      agentic: {
+        title: 'Automatic fixes',
+        description: 'How far OpenIDX may fix a device on its own when the device reports a problem. Fixes only restart or update the agent; they never change what a device may reach.',
+        mode: 'Mode',
+        modes: {
+          off: 'Off — do nothing',
+          observe: 'Observe — record what would be done',
+          tier0: 'Tier 0 — restart the agent, collect logs',
+          tier1: 'Tier 1 — also update the agent',
+        },
+        capped: 'This deployment limits automation to "{{mode}}".',
+        killSwitch: 'Stop all automatic fixes now',
+        killOn: 'Kill switch is ON — nothing is applied.',
+        saved: 'Saved',
+        saveFailed: 'Could not save the setting',
+        recent: 'Recent automatic actions',
+        none: 'Nothing yet.',
+        outcome: { observed: 'would do', applied: 'applied', suppressed: 'held back' },
+        reason: { observe_mode: 'observe mode', mode_below_fix: 'mode too low', anti_flap: 'tried twice today', kill_switch: 'kill switch', queue_busy: 'device is busy' },
+        action: { restart_tunnel: 'restart the agent', collect_logs: 'collect logs', update_agent: 'update the agent' },
+        assistant: {
+          title: 'Assistant',
+          description: 'The model that explains a device\'s problem in plain words. It only narrates: which cause applies is always decided by rules. With "None" the assistant answers from the built-in wording and no model is called.',
+          provider: 'Model',
+          providers: { none: 'None — built-in wording only', anthropic: 'Claude (Anthropic cloud)', openai_compat: 'A model we run (OpenAI-compatible)' },
+          model: 'Model name',
+          baseUrl: 'Address',
+          apiKey: 'API key',
+          keyKept: 'A key is stored — leave empty to keep it',
+          redaction: 'Masking',
+          redactions: { off: 'Off', mask: 'Mask e-mail, IP addresses and secrets', strict: 'Strict — also host and user names' },
+          consent: 'I understand that masked conversation text about devices is sent to Anthropic when someone asks the assistant a question.',
+          save: 'Save assistant settings',
+        },
+      },
       tokens: {
         heading: 'Fleet enrollment tokens',
         intro: 'Reusable tokens an MDM, GPO or script installs the agent with. Each counts its uses, stops at its limit and tags the devices it enrols.',

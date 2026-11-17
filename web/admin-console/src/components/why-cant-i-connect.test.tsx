@@ -118,4 +118,46 @@ describe('WhyCantIConnect', () => {
       expect(screen.queryByText(/checking itself now/)).not.toBeInTheDocument()
     })
   })
+
+  it('offers the assistant only when the organization has one, and shows what it says', async () => {
+    post.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.endsWith('/my/diagnose')
+          ? answer(['TUNNEL_DOWN'], { assistant_available: true })
+          : { session_id: 's1', reply: 'Restart the OpenIDX agent.', assistant: true },
+      ) as never)
+    mount('agent-1')
+    await userEvent.click(screen.getByRole('button', { name: 'Check my device' }))
+    const box = await screen.findByLabelText('Ask the assistant')
+    await userEvent.type(box, 'what now?')
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByText('Restart the OpenIDX agent.')).toBeInTheDocument()
+    expect(post).toHaveBeenLastCalledWith('/api/v1/access/my/assist/messages',
+      expect.objectContaining({ message: 'what now?', agent_id: 'agent-1' }))
+    // The rule engine's wording is still there.
+    expect(screen.getByText('The secure tunnel on the device is not working.')).toBeInTheDocument()
+  })
+
+  it('keeps the verdict and says so when the assistant could not answer', async () => {
+    post.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.endsWith('/my/diagnose')
+          ? answer(['TUNNEL_DOWN'], { assistant_available: true })
+          : { assistant: false, degraded: true },
+      ) as never)
+    mount()
+    await userEvent.click(screen.getByRole('button', { name: 'Check my device' }))
+    await userEvent.type(await screen.findByLabelText('Ask the assistant'), 'hello')
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByText(/could not answer just now/)).toBeInTheDocument()
+  })
+
+  it('shows no chat when there is no assistant', async () => {
+    post.mockResolvedValue(answer(['TUNNEL_DOWN']))
+    mount()
+    await userEvent.click(screen.getByRole('button', { name: 'Check my device' }))
+    await screen.findAllByRole('listitem')
+    expect(screen.queryByLabelText('Ask the assistant')).not.toBeInTheDocument()
+  })
 })

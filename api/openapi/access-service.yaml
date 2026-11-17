@@ -6580,6 +6580,132 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /api/v1/access/my/assist/messages:
+    post:
+      tags: [My Access]
+      summary: Ask the assistant why one of my own devices cannot connect
+      description: >
+        The verdict always comes from the rule engine; when the organization has
+        chosen a model it only narrates it. Without a model, or when the model
+        fails, the answer carries the verdict alone. Conversations are kept
+        server-side for 30 days and belong to the person who started them.
+      operationId: assistMessage
+      x-openidx-handler: internal/access.(*Service).handleAssistMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: {type: string, maxLength: 2000}
+                session_id: {type: string, description: 'Continue this conversation'}
+                agent_id: {type: string, description: 'One of my devices; default is the one that reported most recently'}
+                lang: {type: string, enum: [en, tr]}
+      responses:
+        '200':
+          description: The assistant's reply (when a model answered) and the rule engine's diagnosis
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          description: Too many questions in a short time
+
+  /api/v1/access/agentic/settings:
+    get:
+      tags: [Agent Fleet]
+      summary: How far the platform may act on its own for this organization (operator)
+      operationId: getAgenticSettings
+      x-openidx-handler: internal/access.(*Service).handleGetAgenticSettings
+      responses:
+        '200':
+          description: The organization's autonomy mode, the kill switch and the mode in effect after the deployment's AGENTIC_MODE cap
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode: {type: string, enum: [off, observe, tier0, tier1]}
+                  kill_switch: {type: boolean}
+                  effective_mode: {type: string, enum: [off, observe, tier0, tier1]}
+                  updated_at: {type: string, format: date-time}
+                  provider: {type: string, enum: [none, anthropic, openai_compat]}
+                  model: {type: string}
+                  base_url: {type: string}
+                  redaction: {type: string, enum: [off, mask, strict]}
+                  tools_enabled: {type: boolean}
+                  has_api_key: {type: boolean}
+                  cloud_consent_at: {type: string, format: date-time}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      tags: [Agent Fleet]
+      summary: Change the autonomy mode and/or the kill switch (admin)
+      operationId: putAgenticSettings
+      x-openidx-handler: internal/access.(*Service).handlePutAgenticSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode: {type: string, enum: [off, observe, tier0, tier1]}
+                kill_switch: {type: boolean}
+                provider: {type: string, enum: [none, anthropic, openai_compat], description: 'Which model the assistant uses; none answers from the rule engine alone'}
+                model: {type: string}
+                base_url: {type: string, description: 'OpenAI-compatible endpoint of a model the organization runs, e.g. http://ollama.internal:11434/v1'}
+                redaction: {type: string, enum: [off, mask, strict], description: 'Masking applied to what the model is shown; never off for anthropic'}
+                tools_enabled: {type: boolean}
+                api_key: {type: string, description: 'Write-only; empty removes the stored key'}
+                cloud_consent: {type: boolean, description: 'Required to choose anthropic: masked conversation text is sent to Anthropic'}
+      responses:
+        '200':
+          description: The settings as saved
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/access/agentic/actions:
+    get:
+      tags: [Agent Fleet]
+      summary: What the platform did, would have done or held back on devices (operator)
+      operationId: listAgenticActions
+      x-openidx-handler: internal/access.(*Service).handleListAgenticActions
+      parameters:
+        - {name: agent_id, in: query, required: false, schema: {type: string}}
+      responses:
+        '200':
+          description: The most recent hundred ledger rows, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /api/v1/access/my/resources:
     get:
       tags: [My Access]

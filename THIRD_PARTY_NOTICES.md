@@ -15,15 +15,15 @@ are reported by the same CI job as the `npm-licenses` artifact and are not liste
 
 | Licence | Count |
 |---------|-------|
-| Apache-2.0 | 91 |
-| MIT | 63 |
-| BSD-3-Clause | 32 |
+| Apache-2.0 | 93 |
+| MIT | 71 |
+| BSD-3-Clause | 33 |
 | BSD-2-Clause | 7 |
 | Unlicense | 2 |
 | BSD-2-Clause-FreeBSD | 1 |
 | BSL-1.0 | 1 |
 | MPL-2.0 | 1 |
-| **Total** | **198** |
+| **Total** | **209** |
 
 ## Modules and packages
 
@@ -41,6 +41,7 @@ are reported by the same CI job as the `npm-licenses` artifact and are not liste
 | [github.com/alicebob/miniredis/v2/gopher-json](https://pkg.go.dev/github.com/alicebob/miniredis/v2/gopher-json?tab=licenses) | Unlicense |
 | [github.com/alicebob/miniredis/v2/hyperloglog](https://pkg.go.dev/github.com/alicebob/miniredis/v2/hyperloglog?tab=licenses) | MIT |
 | [github.com/alicebob/miniredis/v2/metro](https://pkg.go.dev/github.com/alicebob/miniredis/v2/metro?tab=licenses) | MIT |
+| [github.com/anthropics/anthropic-sdk-go/v2](https://pkg.go.dev/github.com/anthropics/anthropic-sdk-go/v2?tab=licenses) | Apache-2.0 |
 | [github.com/aws/aws-sdk-go-v2](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2?tab=licenses) | Apache-2.0 |
 | [github.com/aws/aws-sdk-go-v2/credentials](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/credentials?tab=licenses) | Apache-2.0 |
 | [github.com/aws/aws-sdk-go-v2/internal/configsources](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/internal/configsources?tab=licenses) | Apache-2.0 |
@@ -53,10 +54,12 @@ are reported by the same CI job as the `npm-licenses` artifact and are not liste
 | [github.com/aws/aws-sdk-go-v2/service/sts](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/sts?tab=licenses) | Apache-2.0 |
 | [github.com/aws/smithy-go](https://pkg.go.dev/github.com/aws/smithy-go?tab=licenses) | Apache-2.0 |
 | [github.com/aws/smithy-go/internal/sync/singleflight](https://pkg.go.dev/github.com/aws/smithy-go/internal/sync/singleflight?tab=licenses) | BSD-3-Clause |
+| [github.com/bahlo/generic-list-go](https://pkg.go.dev/github.com/bahlo/generic-list-go?tab=licenses) | BSD-3-Clause |
 | [github.com/beevik/etree](https://pkg.go.dev/github.com/beevik/etree?tab=licenses) | BSD-2-Clause |
 | [github.com/beorn7/perks/quantile](https://pkg.go.dev/github.com/beorn7/perks/quantile?tab=licenses) | MIT |
 | [github.com/boombuler/barcode](https://pkg.go.dev/github.com/boombuler/barcode?tab=licenses) | MIT |
 | [github.com/briandowns/spinner](https://pkg.go.dev/github.com/briandowns/spinner?tab=licenses) | Apache-2.0 |
+| [github.com/buger/jsonparser](https://pkg.go.dev/github.com/buger/jsonparser?tab=licenses) | MIT |
 | [github.com/cenkalti/backoff/v4](https://pkg.go.dev/github.com/cenkalti/backoff/v4?tab=licenses) | MIT |
 | [github.com/cenkalti/backoff/v5](https://pkg.go.dev/github.com/cenkalti/backoff/v5?tab=licenses) | MIT |
 | [github.com/cespare/xxhash/v2](https://pkg.go.dev/github.com/cespare/xxhash/v2?tab=licenses) | MIT |
@@ -124,6 +127,7 @@ are reported by the same CI job as the `npm-licenses` artifact and are not liste
 | [github.com/gorilla/securecookie](https://pkg.go.dev/github.com/gorilla/securecookie?tab=licenses) | BSD-3-Clause |
 | [github.com/gorilla/websocket](https://pkg.go.dev/github.com/gorilla/websocket?tab=licenses) | BSD-2-Clause |
 | [github.com/grpc-ecosystem/grpc-gateway/v2](https://pkg.go.dev/github.com/grpc-ecosystem/grpc-gateway/v2?tab=licenses) | BSD-3-Clause |
+| [github.com/invopop/jsonschema](https://pkg.go.dev/github.com/invopop/jsonschema?tab=licenses) | MIT |
 | [github.com/jackc/pgpassfile](https://pkg.go.dev/github.com/jackc/pgpassfile?tab=licenses) | MIT |
 | [github.com/jackc/pgservicefile](https://pkg.go.dev/github.com/jackc/pgservicefile?tab=licenses) | MIT |
 | [github.com/jackc/pgx/v5](https://pkg.go.dev/github.com/jackc/pgx/v5?tab=licenses) | MIT |
@@ -160,6 +164,7 @@ are reported by the same CI job as the `npm-licenses` artifact and are not liste
 | [github.com/openziti/transport/v2](https://pkg.go.dev/github.com/openziti/transport/v2?tab=licenses) | Apache-2.0 |
 | [github.com/orcaman/concurrent-map/v2](https://pkg.go.dev/github.com/orcaman/concurrent-map/v2?tab=licenses) | MIT |
 | [github.com/parallaxsecond/parsec-client-go](https://pkg.go.dev/github.com/parallaxsecond/parsec-client-go?tab=licenses) | Apache-2.0 |
+| [github.com/pb33f/ordered-map/v2](https://pkg.go.dev/github.com/pb33f/ordered-map/v2?tab=licenses) | Apache-2.0 |
 | [github.com/pelletier/go-toml/v2](https://pkg.go.dev/github.com/pelletier/go-toml/v2?tab=licenses) | MIT |
 | [github.com/philhofer/fwd](https://pkg.go.dev/github.com/philhofer/fwd?tab=licenses) | MIT |
 | [github.com/pkg/errors](https://pkg.go.dev/github.com/pkg/errors?tab=licenses) | BSD-2-Clause |
@@ -185,7 +190,12 @@ are reported by the same CI job as the `npm-licenses` artifact and are not liste
 | [github.com/spf13/cobra](https://pkg.go.dev/github.com/spf13/cobra?tab=licenses) | Apache-2.0 |
 | [github.com/spf13/pflag](https://pkg.go.dev/github.com/spf13/pflag?tab=licenses) | BSD-3-Clause |
 | [github.com/spf13/viper](https://pkg.go.dev/github.com/spf13/viper?tab=licenses) | MIT |
+| [github.com/standard-webhooks/standard-webhooks/libraries/go](https://pkg.go.dev/github.com/standard-webhooks/standard-webhooks/libraries/go?tab=licenses) | MIT |
 | [github.com/subosito/gotenv](https://pkg.go.dev/github.com/subosito/gotenv?tab=licenses) | MIT |
+| [github.com/tidwall/gjson](https://pkg.go.dev/github.com/tidwall/gjson?tab=licenses) | MIT |
+| [github.com/tidwall/match](https://pkg.go.dev/github.com/tidwall/match?tab=licenses) | MIT |
+| [github.com/tidwall/pretty](https://pkg.go.dev/github.com/tidwall/pretty?tab=licenses) | MIT |
+| [github.com/tidwall/sjson](https://pkg.go.dev/github.com/tidwall/sjson?tab=licenses) | MIT |
 | [github.com/tinylib/msgp/msgp](https://pkg.go.dev/github.com/tinylib/msgp/msgp?tab=licenses) | MIT |
 | [github.com/tklauser/go-sysconf](https://pkg.go.dev/github.com/tklauser/go-sysconf?tab=licenses) | BSD-3-Clause |
 | [github.com/tklauser/numcpus](https://pkg.go.dev/github.com/tklauser/numcpus?tab=licenses) | Apache-2.0 |
@@ -212,6 +222,7 @@ are reported by the same CI job as the `npm-licenses` artifact and are not liste
 | [go.uber.org/multierr](https://pkg.go.dev/go.uber.org/multierr?tab=licenses) | MIT |
 | [go.uber.org/zap](https://pkg.go.dev/go.uber.org/zap?tab=licenses) | MIT |
 | [go.yaml.in/yaml/v3](https://pkg.go.dev/go.yaml.in/yaml/v3?tab=licenses) | MIT |
+| [go.yaml.in/yaml/v4](https://pkg.go.dev/go.yaml.in/yaml/v4?tab=licenses) | MIT |
 | [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto?tab=licenses) | BSD-3-Clause |
 | [golang.org/x/mod/semver](https://pkg.go.dev/golang.org/x/mod/semver?tab=licenses) | BSD-3-Clause |
 | [golang.org/x/net](https://pkg.go.dev/golang.org/x/net?tab=licenses) | BSD-3-Clause |

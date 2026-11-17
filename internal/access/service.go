@@ -157,6 +157,7 @@ type ProxySession struct {
 
 // Service provides access proxy operations
 type Service struct {
+	agentic              agenticTools // the assistants' tool registry (agentic_tools.go)
 	db                   *database.PostgresDB
 	redis                *database.RedisClient
 	config               *config.Config
@@ -678,7 +679,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// operator's reading of a support code a user gave over the phone
 		// (my_diagnose.go).
 		api.POST("/my/diagnose", svc.handleMyDiagnose)
+		api.POST("/my/assist/messages", svc.handleAssistMessage)
 		api.POST("/diagnose/decode", operatorTier, svc.handleDecodeSupportCode)
+		api.GET("/agentic/settings", operatorTier, svc.handleGetAgenticSettings)
+		api.PUT("/agentic/settings", adminOnly, svc.handlePutAgenticSettings)
+		api.GET("/agentic/actions", operatorTier, svc.handleListAgenticActions)
 
 		// Self-service: "My Network" — what the caller can reach, in plain
 		// language (no overlay vocabulary). Deliberately not adminOnly.

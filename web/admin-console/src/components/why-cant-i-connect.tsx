@@ -18,6 +18,7 @@ export interface MyDiagnosis {
   verdict: { healthy: boolean; causes: Cause[]; bundle_stale?: boolean }
   bundle_at?: string
   bundle_requested?: boolean
+  assistant_available?: boolean
   generated_at: string
 }
 
@@ -30,6 +31,79 @@ export const RECHECK_AFTER_MS = 40_000
  * this only words them. A cause this build has no words for falls back to
  * UNKNOWN rather than showing a raw code.
  */
+interface AssistReply {
+  session_id?: string
+  reply?: string
+  assistant: boolean
+  degraded?: boolean
+}
+
+/** One question to the assistant. The verdict above never depends on the answer. */
+function AssistantChat({ agentId }: { agentId?: string }) {
+  const { t, i18n } = useTranslation()
+  const [text, setText] = useState('')
+  const [sessionId, setSessionId] = useState<string | undefined>()
+  const [turns, setTurns] = useState<{ who: 'you' | 'assistant'; text: string }[]>([])
+  const [note, setNote] = useState<string | null>(null)
+  const ask = useMutation({
+    mutationFn: (message: string) =>
+      api.post<AssistReply>('/api/v1/access/my/assist/messages', {
+        message, session_id: sessionId, agent_id: agentId, lang: i18n.language?.startsWith('tr') ? 'tr' : 'en',
+      }),
+    onSuccess: (r) => {
+      setSessionId(r.session_id ?? sessionId)
+      if (r.assistant && r.reply) {
+        setTurns((cur) => [...cur, { who: 'assistant', text: r.reply! }])
+        setNote(null)
+      } else {
+        setNote(t('diagnose.assist.unavailable'))
+      }
+    },
+    onError: (e) => setNote(
+      (e as { response?: { status?: number } })?.response?.status === 429 ? t('diagnose.assist.tooMany') : t('diagnose.assist.failed'),
+    ),
+  })
+  return (
+    <form
+      className="space-y-2 border-t pt-3"
+      onSubmit={(e) => {
+        e.preventDefault()
+        const q = text.trim()
+        if (!q || ask.isPending) return
+        setTurns((cur) => [...cur, { who: 'you', text: q }])
+        setText('')
+        setNote(null)
+        ask.mutate(q)
+      }}
+    >
+      <p className="text-sm font-medium">{t('diagnose.assist.title')}</p>
+      {turns.length > 0 && (
+        <ul className="space-y-2 text-sm">
+          {turns.map((turn, i) => (
+            <li key={i}>
+              <span className="font-medium">{t(`diagnose.assist.${turn.who}`)}: </span>
+              <span className="whitespace-pre-wrap">{turn.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {ask.isPending && <p className="text-xs text-muted-foreground">{t('diagnose.assist.thinking')}</p>}
+      {note && <p role="alert" className="text-sm text-muted-foreground">{note}</p>}
+      <div className="flex gap-2">
+        <input
+          aria-label={t('diagnose.assist.title')}
+          value={text}
+          maxLength={2000}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={t('diagnose.assist.placeholder')}
+          className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+        />
+        <Button type="submit" size="sm" disabled={ask.isPending || !text.trim()}>{t('diagnose.assist.send')}</Button>
+      </div>
+    </form>
+  )
+}
+
 export function WhyCantIConnect({ agentId }: { agentId?: string }) {
   const { t, i18n } = useTranslation()
   const diagnose = useMutation({
@@ -111,6 +185,8 @@ export function WhyCantIConnect({ agentId }: { agentId?: string }) {
             ))}
           </ol>
         )}
+
+        {result?.assistant_available && <AssistantChat agentId={result.agent_id ?? agentId} />}
 
         {result && !diagnose.isPending && asking && (
           <p className="text-xs text-muted-foreground">{t('diagnose.asking')}</p>

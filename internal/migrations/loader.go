@@ -1833,5 +1833,26 @@ func allMigrations() []*Migration {
 			UpSQL:       agentCommandDiagnoseUp,
 			DownSQL:     agentCommandDiagnoseDown,
 		},
+		{
+			Version:     259,
+			Name:        "agentic_settings",
+			Description: "How far the platform may act on its own. org_agentic_settings holds each organization's autonomy mode (off, observe, tier0, tier1; no row means observe) and kill switch; agentic_actions is the ledger of the fixes the platform applied, would have applied or held back, and the memory behind the rule that one fix is not repeated on a device more than twice a day. Both are org-scoped under FORCE RLS; ledger rows expire after 30 days.",
+			UpSQL:       agenticSettingsUp,
+			DownSQL:     agenticSettingsDown,
+		},
+		{
+			Version:     260,
+			Name:        "agentic_provider",
+			Description: "Which model an organization's assistant uses. org_agentic_settings gains provider (none by default, anthropic, or openai_compat for a model the organization runs), model, base URL, masking level, the API key (encrypted), whether tools are used, and who consented to a cloud model and when. A CHECK holds that anthropic needs a recorded consent and masking above off.",
+			UpSQL:       agenticProviderUp,
+			DownSQL:     agenticProviderDown,
+		},
+		{
+			Version:     261,
+			Name:        "agentic_chat",
+			Description: "Assistant conversations. agentic_sessions and agentic_messages keep what a person and the assistant said, server-side so a conversation can continue and no transcript from a browser is ever trusted (it could carry forged assistant or tool turns). Text is stored as sent to the model, already masked. Org-scoped under FORCE RLS; rows expire after 30 days.",
+			UpSQL:       agenticChatUp,
+			DownSQL:     agenticChatDown,
+		},
 	}
 }
