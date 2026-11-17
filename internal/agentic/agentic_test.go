@@ -23,7 +23,7 @@ func toolbox(ran *[]string) *Registry {
 	}
 	r.Register(Tool{Name: "my_device", Description: "d", Tier: TierRead, Audience: AudienceUser,
 		InputSchema: schema, Scope: ScopeDevice("agent_id"),
-		Run: note("my_device", map[string]string{"status": "tunnel down", "owner": "ada@example.com", "ip": "10.1.2.3"})})
+		Run: note("my_device", map[string]string{"status": "tunnel down", "owner": "ada@example.com", "ip": "192.0.2.7"})})
 	r.Register(Tool{Name: "fleet", Description: "d", Tier: TierRead, Audience: AudienceOperator,
 		InputSchema: schema, Run: note("fleet", "ok")})
 	r.Register(Tool{Name: "restart_device", Description: "d", Tier: TierSafeFix, Audience: AudienceUser,
@@ -83,7 +83,7 @@ func TestDispatchRefusesWhatThePrincipalMayNotDo(t *testing.T) {
 func TestDispatchShowsTheModelMaskedFencedData(t *testing.T) {
 	var ran []string
 	res, events := dispatch(toolbox(&ran), ada, "observe", "my_device", `{}`)
-	if strings.Contains(res.Content, "ada@example.com") || strings.Contains(res.Content, "10.1.2.3") {
+	if strings.Contains(res.Content, "ada@example.com") || strings.Contains(res.Content, "192.0.2.7") {
 		t.Errorf("the model was shown personal data: %s", res.Content)
 	}
 	if !strings.HasPrefix(res.Content, `<untrusted_data tool="my_device">`) || !strings.HasSuffix(res.Content, `</untrusted_data>`) {
