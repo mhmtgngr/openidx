@@ -70,7 +70,7 @@ func (*Anthropic) Capabilities() agentic.Capabilities { return agentic.Capabilit
 // replayed unchanged, as the API requires across a tool loop.
 func (a *Anthropic) Chat(ctx context.Context, req agentic.Request) (agentic.Response, error) {
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(a.model),
+		Model:     a.model,
 		MaxTokens: int64(req.MaxTokens),
 		Messages:  make([]anthropic.MessageParam, 0, len(req.Messages)),
 		OutputConfig: anthropic.OutputConfigParam{

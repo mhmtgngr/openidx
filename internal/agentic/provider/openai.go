@@ -119,7 +119,7 @@ func (o *OpenAI) Chat(ctx context.Context, req agentic.Request) (agentic.Respons
 		var tools []map[string]any
 		for _, t := range req.Tools {
 			tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
-				"name": t.Name, "description": t.Description, "parameters": json.RawMessage(t.InputSchema)}})
+				"name": t.Name, "description": t.Description, "parameters": t.InputSchema}})
 		}
 		body["tools"] = tools
 	}
