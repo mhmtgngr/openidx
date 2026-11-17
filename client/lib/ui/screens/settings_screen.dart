@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../mobile/app_lock.dart';
 import '../../state/providers.dart';
+import 'doctor_screen.dart';
 import 'enroll_screen.dart';
 import 'mobile/control_logs_screen.dart';
 
@@ -116,6 +117,18 @@ class SettingsScreen extends ConsumerWidget {
                 MaterialPageRoute<void>(
                   builder: (_) => const ControlLogsScreen(),
                 ),
+              ),
+            ),
+          // The doctor looks at this computer's own agent service and tunnel, which
+          // a phone does not have, so it is a desktop screen.
+          if (!Platform.isIOS && !Platform.isAndroid)
+            ListTile(
+              leading: const Icon(Icons.medical_services_outlined),
+              title: const Text("Why can't I connect?"),
+              subtitle: const Text('Check this device and see how to fix it'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const DoctorScreen()),
               ),
             ),
           ListTile(

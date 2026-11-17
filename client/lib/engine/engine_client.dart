@@ -62,6 +62,13 @@ abstract class EngineClient {
 
   Future<Posture> posture();
 
+  /// Runs the agent's own diagnosis of why this device cannot connect. With
+  /// [fix] it first applies the repairs that are safe to repeat (flush DNS,
+  /// restart the agent service). [lang] is "en" or "tr"; null lets the agent
+  /// choose from the user's own settings. Desktop only: the phone's engine has
+  /// no service or tunnel to look at, so it throws [EngineException].
+  Future<DoctorReport> doctor({String? lang, bool fix = false});
+
   Future<List<PamEntry>> pamList();
 
   Future<PamConnectResult> pamConnect(String entryId);

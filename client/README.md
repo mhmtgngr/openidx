@@ -99,6 +99,8 @@ Transport as above. Routes (JSON in/out):
 | ------ | --------------- | -------------------------------------- |
 | GET    | `/status`       | —                                      |
 | GET    | `/posture`      | —                                      |
+| GET    | `/doctor`       | — (`?lang=en\|tr`; diagnosis, desktop)  |
+| POST   | `/doctor/repair`| — (`?lang=`; applies safe repairs first) |
 | GET    | `/pam/entries`  | —                                      |
 | POST   | `/login`        | —                                      |
 | POST   | `/logout`       | —                                      |
