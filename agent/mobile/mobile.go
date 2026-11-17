@@ -272,6 +272,18 @@ func Posture() (string, error) {
 	return e.Posture()
 }
 
+// Doctor diagnoses why this phone cannot connect and returns the report JSON
+// (healthy, support_code, items, repairs, can_repair=false). lang is "en" or
+// "tr"; empty uses the phone's own language. It looks and changes nothing: an
+// app in its sandbox has no repair to make, so there is no fix flag.
+func Doctor(lang string) (string, error) {
+	e, err := get()
+	if err != nil {
+		return "", err
+	}
+	return e.Doctor(lang, false)
+}
+
 // PamList returns the PAM entries the user may launch, as a JSON array.
 func PamList() (string, error) {
 	e, err := get()

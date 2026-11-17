@@ -88,6 +88,40 @@ void main() {
     );
   });
 
+  test('doctor() asks the engine in the language given and cannot repair', () async {
+    mockEngine({
+      'start': () => null,
+      'doctor': () => '''
+        {"healthy": false, "support_code": "OX1-ABCD", "can_repair": false,
+         "items": [
+           {"check": "dns", "label": "Name lookup", "status": "fail", "code": "DNS_FAIL",
+            "title": "This phone cannot look up the OpenIDX server name.",
+            "action": "Switch to another Wi-Fi or mobile data."},
+           {"check": "service", "label": "Agent service", "status": "skipped"}
+         ],
+         "repairs": []}
+      ''',
+    });
+
+    // [fix] is asked for and must not reach the engine: a phone has no repair.
+    final r = await newClient().doctor(lang: 'tr', fix: true);
+
+    expect(r.healthy, isFalse);
+    expect(r.canRepair, isFalse);
+    expect(r.problems.single.code, 'DNS_FAIL');
+    expect(r.repairs, isEmpty);
+    final call = calls.firstWhere((c) => c.method == 'doctor');
+    expect(call.arguments, {'lang': 'tr'});
+  });
+
+  test('doctor() surfaces an engine error as EngineException', () async {
+    mockEngine({
+      'start': () => null,
+      'doctor': () => throw PlatformException(code: 'engine_error', message: 'not started'),
+    });
+    expect(() => newClient().doctor(), throwsA(isA<EngineException>()));
+  });
+
   test('start() is only called once across multiple calls', () async {
     mockEngine({
       'start': () => null,

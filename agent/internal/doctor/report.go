@@ -8,7 +8,10 @@ import (
 // Report is the bundle put into words, for a surface that draws its own
 // screen (the desktop and mobile client) rather than printing text.
 type Report struct {
-	Healthy     bool           `json:"healthy"`
+	Healthy bool `json:"healthy"`
+	// CanRepair says the device can try to fix what is wrong itself. The phone
+	// cannot; the screen then shows what to do and no repair button.
+	CanRepair   bool           `json:"can_repair"`
 	SupportCode string         `json:"support_code"`
 	Items       []ReportItem   `json:"items"`
 	Repairs     []ReportRepair `json:"repairs"`

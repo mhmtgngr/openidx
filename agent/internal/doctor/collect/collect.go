@@ -26,6 +26,10 @@ type Deps struct {
 	Settle time.Duration
 }
 
+// OnPhone says whether this build is the phone app. A var so tests can be a
+// phone on a laptop.
+var OnPhone = func() bool { return runtime.GOOS == "android" || runtime.GOOS == "ios" }
+
 // DefaultDeps diagnoses the real device.
 func DefaultDeps() Deps {
 	return Deps{
@@ -39,7 +43,7 @@ func DefaultDeps() Deps {
 
 // Inputs collects what the device knows about itself.
 func Inputs(d Deps, dir, version string) doctor.Inputs {
-	in := doctor.Inputs{AgentVersion: version}
+	in := doctor.Inputs{AgentVersion: version, Mobile: OnPhone()}
 
 	cfg, err := d.LoadConfig(dir)
 	if err == nil {
@@ -85,6 +89,12 @@ func Run(ctx context.Context, d Deps, dir, version string, fix bool) doctor.Bund
 		ctx = context.Background()
 	}
 	b := doctor.Run(ctx, Inputs(d, dir, version), d.Probes, doctor.Options{})
+	if OnPhone() {
+		// An app in its sandbox can flush no resolver and restart no service;
+		// it says what is wrong and leaves the rest to the person.
+		b.Repairs = []doctor.Repair{}
+		return b
+	}
 	if !fix {
 		b.Repairs = doctor.PlanRepairs(b)
 		return b

@@ -264,3 +264,14 @@ func TestHostInterfacesAreGomobileSafe(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorBeforeStartIsAnError(t *testing.T) {
+	mu.Lock()
+	old := engine
+	engine = nil
+	mu.Unlock()
+	t.Cleanup(func() { mu.Lock(); engine = old; mu.Unlock() })
+	if _, err := Doctor("en"); err == nil {
+		t.Error("Doctor answered before the engine was started")
+	}
+}

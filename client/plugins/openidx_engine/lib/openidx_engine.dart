@@ -110,6 +110,13 @@ class OpenidxEngine {
 
   Future<String> posture() => _invokeString('posture');
 
+  /// Diagnoses why this phone cannot connect: the agent's own checks (name
+  /// lookup, reaching the server, the clock, credentials, identity), worded in
+  /// [lang] ("en", "tr", or empty for the phone's own). Returns the report JSON
+  /// (see DoctorReport in client/lib/engine/models.dart). It changes nothing.
+  Future<String> doctor(String lang) =>
+      _invokeString('doctor', <String, Object?>{'lang': lang});
+
   Future<String> pamList() => _invokeString('pamList');
 
   Future<String> pamConnect(String entryId) =>

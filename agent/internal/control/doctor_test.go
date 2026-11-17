@@ -69,3 +69,26 @@ func TestDoctorWithFixOnAnUnrepairableDeviceChangesNothing(t *testing.T) {
 		t.Errorf("not being enrolled has no local repair: %+v", r)
 	}
 }
+
+// The report says whether this device can try to fix itself: a computer can, a
+// phone cannot, and the client draws its repair button from that.
+func TestDoctorReportSaysWhetherTheDeviceCanRepair(t *testing.T) {
+	unenrolledDeps(t)
+	e := newTestEngine(t, &fakeBackend{})
+	for _, phone := range []bool{false, true} {
+		old := collect.OnPhone
+		collect.OnPhone = func() bool { return phone }
+		out, err := e.Doctor("en", false)
+		collect.OnPhone = old
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r doctor.Report
+		if err := json.Unmarshal([]byte(out), &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.CanRepair == phone {
+			t.Errorf("phone=%v: can_repair = %v", phone, r.CanRepair)
+		}
+	}
+}

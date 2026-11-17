@@ -37,6 +37,11 @@ type Inputs struct {
 	Tunnel *tunnel.Status
 	// ServiceRunning is nil when it cannot be told.
 	ServiceRunning *bool
+	// Mobile says this is the phone app. Its engine runs inside the app: there
+	// is no separate agent service to be stopped and no tunneler process to be
+	// off, so those two checks have nothing to say, and nothing here can be
+	// repaired from inside a sandbox.
+	Mobile bool
 }
 
 func checkConfig(in Inputs) Check {
@@ -127,6 +132,8 @@ func identityNotAfter(path string, readFile func(string) ([]byte, error)) (time.
 func checkService(in Inputs) Check {
 	c := Check{ID: CheckService, Status: StatusPass}
 	switch {
+	case in.Mobile:
+		c.Status, c.Detail = StatusSkipped, "the app is the engine"
 	case in.ServiceRunning == nil:
 		c.Status, c.Detail = StatusSkipped, "cannot tell from here"
 	case !*in.ServiceRunning:
@@ -137,6 +144,10 @@ func checkService(in Inputs) Check {
 
 func checkTunnel(in Inputs) Check {
 	c := Check{ID: CheckTunnel, Status: StatusPass}
+	if in.Mobile {
+		c.Status, c.Detail = StatusSkipped, "the app dials services itself"
+		return c
+	}
 	if !in.Enrolled {
 		c.Status, c.Detail = StatusSkipped, "not enrolled"
 		return c

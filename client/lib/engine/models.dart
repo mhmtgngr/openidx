@@ -419,9 +419,15 @@ class DoctorReport {
     required this.supportCode,
     required this.items,
     required this.repairs,
+    this.canRepair = true,
   });
 
   final bool healthy;
+
+  /// Whether the device can try to fix what is wrong by itself. A phone cannot
+  /// (an app cannot flush a resolver or restart a service), so it shows what to
+  /// do and no repair button. An agent that does not say is assumed able.
+  final bool canRepair;
 
   /// A short code (OX1-...) a person can read to support, carrying the failing
   /// checks and nothing about the device.
@@ -443,6 +449,7 @@ class DoctorReport {
       supportCode: _asString(json['support_code']),
       items: list(json['items'], DoctorItem.fromJson),
       repairs: list(json['repairs'], DoctorRepair.fromJson),
+      canRepair: _asBool(json['can_repair'], true),
     );
   }
 }

@@ -121,3 +121,36 @@ func TestRunPlansWithoutFixAndRechecksWithIt(t *testing.T) {
 		t.Fatalf("with fix: healthy=%v restarts=%d repairs=%+v", b.Healthy(), restarts, b.Repairs)
 	}
 }
+
+// On a phone the engine is inside the app: no service to be down, no tunneler
+// to be off, nothing to repair.
+func TestOnAPhoneTheServiceAndTunnelHaveNothingToSayAndNothingIsRepaired(t *testing.T) {
+	old := OnPhone
+	OnPhone = func() bool { return true }
+	t.Cleanup(func() { OnPhone = old })
+
+	// The shape that, anywhere else, is a failing service and a switched-off
+	// tunnel: enrolled, no status pipe, tunnel not configured.
+	repairs := 0
+	d := Deps{LoadConfig: func(string) (*agent.AgentConfig, error) {
+		return &agent.AgentConfig{AgentID: "phone-1", ServerURL: "https://idx.example.test"}, nil
+	}, QueryIPC: noPipe, Probes: okProbes{}, Actions: stubActions{onRestart: func() { repairs++ }}}
+
+	if in := Inputs(d, "", ""); !in.Mobile {
+		t.Fatalf("a phone's inputs say it is not one: %+v", in)
+	}
+	for _, fix := range []bool{false, true} {
+		b := Run(context.Background(), d, "", "", fix)
+		if !b.Healthy() {
+			t.Errorf("fix=%v: a healthy phone was judged unhealthy: %+v", fix, b.Failing())
+		}
+		if len(b.Repairs) != 0 || repairs != 0 {
+			t.Errorf("fix=%v: a phone was offered or given a repair: %+v (restarts %d)", fix, b.Repairs, repairs)
+		}
+		for _, c := range b.Checks {
+			if (c.ID == doctor.CheckService || c.ID == doctor.CheckTunnel) && c.Status != doctor.StatusSkipped {
+				t.Errorf("fix=%v: %s was %s on a phone", fix, c.ID, c.Status)
+			}
+		}
+	}
+}
