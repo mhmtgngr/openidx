@@ -6620,6 +6620,77 @@ paths:
         '429':
           description: Too many questions in a short time
 
+  /api/v1/access/agent/rollout:
+    get:
+      tags: [Agent Fleet]
+      summary: How the agent update is going and the step the rules recommend (operator)
+      operationId: getAgentRollout
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleGetRollout
+      responses:
+        '200':
+          description: The target version, the update ring, the rules' verdict with its reasons and counts, and the pending proposals
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/access/agent/rollout/proposals/{id}/approve:
+    post:
+      tags: [Agent Fleet]
+      summary: Approve a proposed rollout step and apply it (admin)
+      description: >
+        Applies the step only if the update settings are still the ones it was
+        drawn from and the rules still recommend it; otherwise 409 and the
+        proposal is retired.
+      operationId: approveRolloutProposal
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleApproveRolloutProposal
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: The step that was applied
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The settings changed or the rules no longer recommend this step
+
+  /api/v1/access/agent/rollout/proposals/{id}/reject:
+    post:
+      tags: [Agent Fleet]
+      summary: Reject a proposed rollout step (admin)
+      operationId: rejectRolloutProposal
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleRejectRolloutProposal
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: The proposal that was rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/v1/access/agentic/settings:
     get:
       tags: [Agent Fleet]

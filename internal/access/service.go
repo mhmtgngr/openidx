@@ -1156,6 +1156,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// stopped reporting (AGENT_LIVENESS_TIMEOUT), and a minute is the
 		// slack that adds to the timeout.
 		agentHandler.StartGracePeriodEnforcer(context.Background(), time.Minute)
+		// The rollout operator watches the agent update and proposes (or, when
+		// the organization allows it, pauses a failing) rollout step.
+		agentHandler.StartRolloutOperator(context.Background(), rolloutInterval)
 		svc.agentHandler = agentHandler
 
 		// Server-side Play Integrity verification (Phase 1+ Android client).

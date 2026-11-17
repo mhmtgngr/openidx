@@ -30,6 +30,7 @@ import { QueryError } from '../components/query-error'
 import { AgentChecksSection } from '../components/agent-checks-section'
 import { FleetTokensSection } from '../components/fleet-tokens-section'
 import { AgentUpdatesSection, updateStateLabel } from '../components/agent-updates-section'
+import { RolloutAssistantSection } from '../components/rollout-assistant-section'
 import { AgenticSettingsSection } from '../components/agentic-settings-section'
 import { AgentCommandsDialog } from '../components/agent-commands-dialog'
 import { TunnelPolicyBadge, TunnelStatusBadge, type TunnelStatus } from '../components/tunnel-status-badge'
@@ -470,6 +471,8 @@ export function AgentFleetPage() {
 
       {/* The update ring: channel, pin, rollout, pause. */}
       <AgentUpdatesSection />
+
+      <RolloutAssistantSection />
 
       {/* Fleet enrollment tokens and the one-time Deploy panel. */}
       <FleetTokensSection />
