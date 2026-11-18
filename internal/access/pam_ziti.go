@@ -152,24 +152,28 @@ func (s *Service) provisionEntryZitiService(ctx context.Context, zm *ZitiManager
 		return fmt.Errorf("attach intercept config: %w", err)
 	}
 
-	// 4. Bind → edge routers (they host the terminator to the target).
+	// 4. Make the service available on all edge routers FIRST: the hosting router
+	//    opens a Bind session the moment Bind grants it the service, and a session
+	//    only lists routers a service-edge-router policy already allows (a late
+	//    policy cost a fresh service about two minutes before it could be dialed).
+	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+serviceName,
+		[]string{"#" + serviceName}, []string{"#all"}); err != nil {
+		return fmt.Errorf("service-edge-router policy: %w", err)
+	}
+
+	// 5. Bind → edge routers (they host the terminator to the target).
 	if _, err := zm.EnsureServicePolicy(ctx, "openidx-bind-"+serviceName, "Bind",
 		[]string{"#" + serviceName}, []string{pamZitiRouterRole}); err != nil {
 		return fmt.Errorf("bind policy: %w", err)
 	}
 
-	// 5. Dial → only the PAM broker's ziti-tunnel identity.
+	// 6. Dial → only the PAM broker's ziti-tunnel identity.
 	if _, err := zm.EnsureServicePolicy(ctx, "openidx-dial-"+serviceName, "Dial",
 		[]string{"#" + serviceName}, []string{pamBrokerDialerRole}); err != nil {
 		return fmt.Errorf("dial policy: %w", err)
 	}
 
-	// 6. Make the service available on all edge routers, and ensure routers carry
-	//    the #ziti-routers role the Bind policy targets.
-	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+serviceName,
-		[]string{"#" + serviceName}, []string{"#all"}); err != nil {
-		return fmt.Errorf("service-edge-router policy: %w", err)
-	}
+	// 7. Ensure routers carry the #ziti-routers role the Bind policy targets.
 	if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
 		s.logger.Warn("provisionEntryZitiService: ensure router role attribute failed (non-fatal)", zap.Error(err))
 	}

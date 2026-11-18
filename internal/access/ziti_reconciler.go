@@ -560,6 +560,12 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	// mirror is what collectZitiPillar resolves a user's reach from). d.OrgID
 	// comes straight from the route row; when it is empty the policy is not
 	// mirrored at all rather than being attached to some default org.
+	// Before Bind, so a router that hosts the service finds its edge-router policy
+	// already there (see ensureNetworkService for the failure this prevents).
+	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
+		[]string{svcRole}, []string{"#all"}); err != nil {
+		rec.logger.Debug("serp (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
+	}
 	if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-bind-"+d.ServiceName, "Bind",
 		[]string{svcRole}, []string{bindIdentity}); err != nil {
 		rec.logger.Warn("bind policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
@@ -596,10 +602,6 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	if _, err := zm.EnsureServicePolicyForOrgSemantic(ctx, d.OrgID, "openidx-dial-"+d.ServiceName, "Dial",
 		[]string{svcRole}, dialRoles, semantic); err != nil {
 		rec.logger.Warn("dial policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
-	}
-	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
-		[]string{svcRole}, []string{"#all"}); err != nil {
-		rec.logger.Debug("serp (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
 
 	// Per-org overlay scoping (Wave A2): when ZitiPerOrgAttributes is on and the
