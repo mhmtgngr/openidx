@@ -7,5 +7,14 @@
 #
 # Do not add an entry to make a build green. Bump the dependency.
 
-# No entries. GHSA-vfj7-8cjw-p6xm (braces) was the first; the Tailwind 4
-# migration removed braces from the tree and the entry with it.
+# GHSA-vfj7-8cjw-p6xm (braces) was the first entry; the Tailwind 4 migration
+# removed braces from the tree and the entry with it.
+
+# GHSA-fc5q-39xc-vjpf: picomatch <= 4.0.7, ReDoS through single-branch repeated
+# extglobs (published 2026-11-18). No patched release exists: 4.0.7 is the
+# latest on npm, so there is nothing to bump to. picomatch reaches the console
+# only through vite, vitest and tinyglobby (build and test tooling; `npm audit
+# --omit=dev` reports 0 high or critical), and the globs those tools match are
+# this repository's own configuration, never input from a user or a request.
+# Look again when picomatch publishes a fix, or on the date below.
+GHSA-fc5q-39xc-vjpf exp:2026-12-18
