@@ -28,6 +28,7 @@ func TestProvisionDialableService(t *testing.T) {
 	createdServices := []string{}
 	policies := map[string]map[string]interface{}{} // name -> body
 	serps := map[string]bool{}
+	var order []string // the service-policy and service-edge-router-policy POSTs, in the order sent
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -72,12 +73,14 @@ func TestProvisionDialableService(t *testing.T) {
 			m := readJSON()
 			name, _ := m["name"].(string)
 			policies[name] = m
+			order = append(order, "policy:"+name)
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"data":{"id":"pol-` + name + `"}}`))
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/service-edge-router-policies"):
 			m := readJSON()
 			name, _ := m["name"].(string)
 			serps[name] = true
+			order = append(order, "policy:"+name)
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"data":{"id":"serp-` + name + `"}}`))
 		case r.Method == "PATCH":
@@ -154,5 +157,12 @@ func TestProvisionDialableService(t *testing.T) {
 	// service-edge-router-policy present
 	if !serps["openidx-serp-secops"] {
 		t.Fatalf("service-edge-router-policy openidx-serp-secops not created")
+	}
+	// The edge-router policy first: the hosting router opens its Bind session
+	// the moment Bind grants it the service, and a session only lists the routers
+	// an existing service-edge-router policy allows.
+	want := []string{"policy:openidx-serp-secops", "policy:openidx-bind-secops", "policy:openidx-dial-secops"}
+	if strings.Join(order, ",") != strings.Join(want, ",") {
+		t.Fatalf("policies created in the order %v, want %v", order, want)
 	}
 }

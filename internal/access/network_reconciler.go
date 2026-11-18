@@ -146,6 +146,15 @@ func (rec *ZitiReconciler) noteNetworkDesired(desired []DesiredNetworkService) {
 // EnsureConfig reuses a config whose data is unchanged, EnsureServiceConfig
 // attaches only what is missing, and EnsureServicePolicyForOrgSemantic updates
 // a policy only when its roles or semantic differ.
+//
+// The service-edge-router policy goes BEFORE the Bind policy, never after. The
+// hosting router sees the service the moment Bind grants it access, opens a
+// Bind session at once and asks the controller for a terminator. A session only
+// lists the edge routers the service-edge-router policy allows, and that policy
+// did not exist yet, so the controller refused the request ("invalid edge router
+// for session") and the router retried only after about two minutes: every new
+// service was undialable for 2m12s (measured on the box: 7-9 ms with the policy
+// in place first). Dial follows Bind, so nothing can dial before this exists.
 func (rec *ZitiReconciler) ensureNetworkService(ctx context.Context, zm *ZitiManager, d DesiredNetworkService) error {
 	// Re-validate at emit time: what is written to Ziti is exactly the
 	// canonical, guard-checked target, whatever path produced d.
@@ -207,6 +216,11 @@ func (rec *ZitiReconciler) ensureNetworkService(ctx context.Context, zm *ZitiMan
 			return errNoRouterInSite(d.SiteSlug)
 		}
 	}
+	// Before Bind: see the note above on the hosting router.
+	if err := zm.convergeServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
+		[]string{svcRole}, []string{"#all"}); err != nil {
+		return fmt.Errorf("service edge router policy: %w", err)
+	}
 	if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-bind-"+d.ServiceName, "Bind",
 		[]string{svcRole}, []string{siteBindRole(d.SiteSlug)}); err != nil {
 		return fmt.Errorf("bind policy: %w", err)
@@ -215,10 +229,6 @@ func (rec *ZitiReconciler) ensureNetworkService(ctx context.Context, zm *ZitiMan
 	if _, err := zm.EnsureServicePolicyForOrgSemantic(ctx, d.OrgID, "openidx-dial-"+d.ServiceName, "Dial",
 		[]string{svcRole}, dialRoles, semantic); err != nil {
 		return fmt.Errorf("dial policy: %w", err)
-	}
-	if err := zm.convergeServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
-		[]string{svcRole}, []string{"#all"}); err != nil {
-		return fmt.Errorf("service edge router policy: %w", err)
 	}
 	// No per-org Dial policy for a network service: #org-<id> would grant
 	// every member of the organization, wider than the assignment-scoped
