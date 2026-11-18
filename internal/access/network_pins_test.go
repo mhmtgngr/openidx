@@ -58,9 +58,9 @@ func TestPinnedServiceConfigs(t *testing.T) {
 		t.Errorf("the port still follows the dial, bounded by the resource's ranges: %v", host)
 	}
 
-	pinned.ForwardAddress, pinned.ForwardPort = "10.9.9.9", 8443
+	pinned.ForwardAddress, pinned.ForwardPort = "198.51.100.9", 8443
 	host = hostV1Data(pinned)
-	if host["address"] != "10.9.9.9" || host["port"] != 8443 {
+	if host["address"] != "198.51.100.9" || host["port"] != 8443 {
 		t.Errorf("an explicit forward address and port win over the name: %v", host)
 	}
 }
