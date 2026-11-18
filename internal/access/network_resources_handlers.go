@@ -48,7 +48,12 @@ type networkPolicyView struct {
 	// carrying one of TunnelTags) or "off". AlwaysOn is TunnelScope == "all".
 	TunnelScope string   `json:"tunnel_scope"`
 	TunnelTags  []string `json:"tunnel_tags"`
-	UpdatedAt   string   `json:"updated_at,omitempty"`
+	// NameResolution is who answers the names of tunneled applications:
+	// "tunnel" (the tunneler, the default) or "agent" (the agent answers the
+	// pinned names itself, for a device next to a VPN client that enforces its
+	// own DNS). See network_pins.go.
+	NameResolution string `json:"name_resolution"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
 	// Version is the policy version devices receive (tunnel_policy.go), and
 	// Devices how many active devices report applying it. Both are absent
 	// when they cannot be read; the policy itself is still answered.
@@ -109,9 +114,10 @@ func (s *Service) loadNetworkTarget(ctx context.Context, orgID, appID string) (N
 	var fwdAddr *string
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT hosts, COALESCE(cidrs::text[], '{}'), dns_names, port_ranges, protocols, forward_address, forward_port,
-		        COALESCE((SELECT slug FROM sites WHERE sites.id = network_targets.site_id AND NOT sites.is_default), '')
+		        COALESCE((SELECT slug FROM sites WHERE sites.id = network_targets.site_id AND NOT sites.is_default), ''),
+		        COALESCE(host(pin_ip), '')
 		   FROM network_targets WHERE application_id = $1 AND org_id = $2`, appID, orgID).
-		Scan(&t.Hosts, &t.CIDRs, &t.DNSNames, &portRanges, &t.Protocols, &fwdAddr, &fwdPort, &t.Site)
+		Scan(&t.Hosts, &t.CIDRs, &t.DNSNames, &portRanges, &t.Protocols, &fwdAddr, &fwdPort, &t.Site, &t.PinIP)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, false, nil
 	}
@@ -431,13 +437,13 @@ func (s *Service) handleGetNetworkPolicy(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	v := networkPolicyView{SplitTunnel: true, TunnelScope: tunnelScopeTagged, TunnelTags: []string{}}
+	v := networkPolicyView{SplitTunnel: true, TunnelScope: tunnelScopeTagged, TunnelTags: []string{}, NameResolution: nameResolutionTunnel}
 	var updated *string
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT tunnel_scope = 'all', split_tunnel, block_direct_corporate_cidrs, tunnel_scope, tunnel_tags,
-		        to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')
+		        to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SSOF'), name_resolution
 		   FROM org_network_policy WHERE org_id = $1`, org.ID).
-		Scan(&v.AlwaysOn, &v.SplitTunnel, &v.BlockDirectCorporateCIDRs, &v.TunnelScope, &v.TunnelTags, &updated)
+		Scan(&v.AlwaysOn, &v.SplitTunnel, &v.BlockDirectCorporateCIDRs, &v.TunnelScope, &v.TunnelTags, &updated, &v.NameResolution)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		s.logger.Error("read network policy", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read network policy"})
@@ -459,10 +465,19 @@ func (s *Service) handlePutNetworkPolicy(c *gin.Context) {
 		BlockDirectCorporateCIDRs *bool     `json:"block_direct_corporate_cidrs"`
 		TunnelScope               *string   `json:"tunnel_scope"`
 		TunnelTags                *[]string `json:"tunnel_tags"`
+		NameResolution            *string   `json:"name_resolution"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if req.NameResolution != nil {
+		nr := strings.TrimSpace(*req.NameResolution)
+		if nr != nameResolutionTunnel && nr != nameResolutionAgent {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name_resolution must be one of tunnel, agent"})
+			return
+		}
+		req.NameResolution = &nr
 	}
 	scope, tags, msg := normalizeTunnelScope(req.AlwaysOn, req.TunnelScope, req.TunnelTags)
 	if msg != "" {
@@ -483,18 +498,19 @@ func (s *Service) handlePutNetworkPolicy(c *gin.Context) {
 	}
 	var v networkPolicyView
 	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO org_network_policy (org_id, always_on, split_tunnel, block_direct_corporate_cidrs, updated_by, tunnel_scope, tunnel_tags)
-		 VALUES ($1, COALESCE($2::text, 'tagged') = 'all', COALESCE($3, true), COALESCE($4, false), $5, COALESCE($2::text, 'tagged'), COALESCE($6::text[], '{}'))
+		`INSERT INTO org_network_policy (org_id, always_on, split_tunnel, block_direct_corporate_cidrs, updated_by, tunnel_scope, tunnel_tags, name_resolution)
+		 VALUES ($1, COALESCE($2::text, 'tagged') = 'all', COALESCE($3, true), COALESCE($4, false), $5, COALESCE($2::text, 'tagged'), COALESCE($6::text[], '{}'), COALESCE($7::text, 'tunnel'))
 		 ON CONFLICT (org_id) DO UPDATE SET
+		   name_resolution = COALESCE($7::text, org_network_policy.name_resolution),
 		   tunnel_scope = COALESCE($2::text, org_network_policy.tunnel_scope),
 		   always_on = COALESCE($2::text, org_network_policy.tunnel_scope) = 'all',
 		   tunnel_tags = COALESCE($6::text[], org_network_policy.tunnel_tags),
 		   split_tunnel = COALESCE($3, org_network_policy.split_tunnel),
 		   block_direct_corporate_cidrs = COALESCE($4, org_network_policy.block_direct_corporate_cidrs),
 		   updated_by = $5, updated_at = NOW()
-		 RETURNING always_on, split_tunnel, block_direct_corporate_cidrs, tunnel_scope, tunnel_tags, to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')`,
-		org.ID, scope, req.SplitTunnel, req.BlockDirectCorporateCIDRs, updatedBy, tags).
-		Scan(&v.AlwaysOn, &v.SplitTunnel, &v.BlockDirectCorporateCIDRs, &v.TunnelScope, &v.TunnelTags, &v.UpdatedAt)
+		 RETURNING always_on, split_tunnel, block_direct_corporate_cidrs, tunnel_scope, tunnel_tags, to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SSOF'), name_resolution`,
+		org.ID, scope, req.SplitTunnel, req.BlockDirectCorporateCIDRs, updatedBy, tags, req.NameResolution).
+		Scan(&v.AlwaysOn, &v.SplitTunnel, &v.BlockDirectCorporateCIDRs, &v.TunnelScope, &v.TunnelTags, &v.UpdatedAt, &v.NameResolution)
 	if err != nil {
 		s.logger.Error("save network policy", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save network policy"})
@@ -502,8 +518,11 @@ func (s *Service) handlePutNetworkPolicy(c *gin.Context) {
 	}
 	s.logAuditEvent(c, "network_policy.update", org.ID, "organization", map[string]interface{}{
 		"always_on": v.AlwaysOn, "split_tunnel": v.SplitTunnel, "block_direct_corporate_cidrs": v.BlockDirectCorporateCIDRs,
-		"tunnel_scope": v.TunnelScope, "tunnel_tags": v.TunnelTags,
+		"tunnel_scope": v.TunnelScope, "tunnel_tags": v.TunnelTags, "name_resolution": v.NameResolution,
 	})
+	// Pins are allocated and written into the services by the reconciler; do not
+	// make the administrator wait for its next 30-second pass.
+	s.enqueueReconcile()
 	s.withRollout(ctx, org.ID, &v)
 	c.JSON(http.StatusOK, v)
 }

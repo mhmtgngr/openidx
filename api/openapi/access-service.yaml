@@ -11251,6 +11251,15 @@ components:
           description: >-
             Slug of the site whose edge routers host the resource (Bind).
             Empty or "default" is the default site; an unknown slug is 400.
+        pin_ip:
+          type: string
+          readOnly: true
+          description: >-
+            The stable overlay address the server gave a resource with exactly
+            one DNS name (from 100.127.0.0/16, unique per organization). Read
+            only: a value in a request is ignored. Allocated once an
+            organization sets name_resolution to agent, and kept if it is set
+            back.
     Site:
       type: object
       properties:
@@ -11299,14 +11308,26 @@ components:
           description: Device tags the tagged scope covers (trimmed, deduplicated, sorted).
         split_tunnel: { type: boolean, default: true }
         block_direct_corporate_cidrs: { type: boolean, default: false }
+        name_resolution:
+          type: string
+          enum: [tunnel, agent]
+          default: tunnel
+          description: >-
+            Who answers the names of tunneled applications. tunnel (default):
+            the device's tunneler, as always. agent: next to a VPN client that
+            enforces its own DNS the tunneler never sees the question, so every
+            network resource with exactly one DNS name gets a stable overlay
+            address (a pin, from 100.127.0.0/16) that its service also
+            intercepts, and the agent answers that name itself. Fields left out
+            on PUT keep their value; saving it queues a reconcile.
         updated_at: { type: string, format: date-time }
         version:
           type: string
           readOnly: true
           description: >-
             The policy version devices receive (16 hex characters, a digest of
-            the switches and of the corporate ranges the block covers). Absent
-            when it cannot be read.
+            the switches, of the corporate ranges the block covers, and of
+            name_resolution when it is agent). Absent when it cannot be read.
         devices:
           type: object
           readOnly: true

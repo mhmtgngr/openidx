@@ -673,6 +673,42 @@ func guardEmittedConfigs(intercept, host map[string]interface{}) []string {
 	return errs
 }
 
+// guardEmittedConfigsPinned is guardEmittedConfigs for a target that carries a
+// pin. The pin sits inside 100.64.0.0/10, which the guard refuses everywhere
+// else (it is the tunneler's own range), so it is judged on its own terms and
+// then taken out of the list the general check sees: it must be an IPv4 address
+// of the pin pool in canonical spelling, and it must really be in the intercept
+// addresses. Nothing else in 100.64.0.0/10 gets through, and an address the
+// server did not allocate is a pin the pool check refuses.
+func guardEmittedConfigsPinned(intercept, host map[string]interface{}, pin string) []string {
+	if pin == "" {
+		return guardEmittedConfigs(intercept, host)
+	}
+	a, err := netip.ParseAddr(pin)
+	if err != nil || !a.Is4() || a.String() != pin || !nameResolutionPool.Contains(a) {
+		return []string{fmt.Sprintf("pin %q is not an IPv4 address of %s in its canonical spelling", pin, nameResolutionPool)}
+	}
+	addrs, _ := intercept["addresses"].([]string)
+	rest := make([]string, 0, len(addrs))
+	found := false
+	for _, s := range addrs {
+		if s == pin && !found {
+			found = true
+			continue
+		}
+		rest = append(rest, s)
+	}
+	if !found {
+		return []string{fmt.Sprintf("pin %s is not among the intercept addresses", pin)}
+	}
+	withoutPin := make(map[string]interface{}, len(intercept))
+	for k, v := range intercept {
+		withoutPin[k] = v
+	}
+	withoutPin["addresses"] = rest
+	return guardEmittedConfigs(withoutPin, host)
+}
+
 // checkEmittedAddress judges one address string as Ziti will read it: a CIDR,
 // an IP literal, a *.domain wildcard or a host name, each of which must
 // already be in its canonical spelling.

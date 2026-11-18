@@ -81,3 +81,32 @@ exists and can request access to it.
 
 If you are pushing the desktop client to everyone, check first whether the
 resource can simply be published for the browser instead.
+
+---
+
+## Names next to a VPN client (name resolution)
+
+A device that runs a VPN client which **enforces its own DNS** (GlobalProtect
+does: it answers every UDP/53 question on the machine, whatever address it goes
+to) never lets the tunneler hear the question, so the names of tunneled
+applications do not resolve. The tunnel itself connects, and an application
+given by address opens.
+
+**Network policy → "Names of tunneled applications are answered by"** chooses
+who answers:
+
+| Setting | What happens |
+| --- | --- |
+| **The tunnel** (default) | Nothing changes. |
+| **The agent, with a pinned address** | Each resource with **exactly one DNS name** (no wildcard, no hosts or ranges) gets a *pin*: a stable overlay address from `100.127.0.0/16`, shown beside the resource and unique inside your organization. The service intercepts the name **and** the pin, so a device that does not know about pins keeps working as before. A device is told only the pins of resources it can dial (with assignment enforcement on, those it is assigned), and answers those names itself. |
+
+Notes for the administrator:
+
+- Pins are allocated by the reconciler within about 30 seconds of turning the
+  setting on, and are kept when it is turned back (they do not change).
+- A resource covering several names, hosts or ranges, or a wildcard, keeps
+  being answered by the tunneler: a pin stands for one name.
+- The setting needs an agent that supports it (the policy tells older agents
+  nothing they act on); until then it changes nothing on the device.
+- The pin range is reserved: nothing you enter as a target may use
+  `100.64.0.0/10`, and a pin in a request is ignored.

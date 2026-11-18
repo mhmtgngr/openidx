@@ -47,6 +47,20 @@ type agentNetworkPolicy struct {
 	BlockDirectCorporateCIDRs bool     `json:"block_direct_corporate_cidrs"`
 	CorporateCIDRs            []string `json:"corporate_cidrs"`
 	Version                   string   `json:"version"`
+
+	// NameResolution is "agent" when the organization asks the agent to answer
+	// the names of tunneled applications itself (migration 264); absent
+	// otherwise, which is also what an agent that predates it sees. It is part
+	// of Version, so turning it on or off moves the version of every device.
+	NameResolution string `json:"name_resolution,omitempty"`
+	// NamePins are the names this device answers itself and the overlay address
+	// each answers with; NamePinsVersion is their digest, "" for none. They are
+	// per device (only what the device can dial, see loadDeviceNamePins), so
+	// they are NOT part of Version: the console compares the organization's
+	// version with what each device reports, and a per-device digest would show
+	// every device as pending. An agent applies a change of NamePinsVersion.
+	NamePins        []namePin `json:"name_pins,omitempty"`
+	NamePinsVersion string    `json:"name_pins_version,omitempty"`
 }
 
 // maxCorporateCIDRs bounds what one policy carries to a device (and what the
@@ -59,6 +73,11 @@ func policyVersion(p agentNetworkPolicy) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "v1|%t|%t|%t|%s", p.AlwaysOn, p.SplitTunnel, p.BlockDirectCorporateCIDRs,
 		strings.Join(p.CorporateCIDRs, ","))
+	if p.NameResolution != "" {
+		// Only when it is on, so every organization that has not turned it on
+		// keeps the version its devices already report.
+		fmt.Fprintf(h, "|names=%s", p.NameResolution)
+	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -173,12 +192,16 @@ func loadOrgTunnelPolicy(ctx context.Context, db *database.PostgresDB, orgID str
 		return nil, errors.New("no database or organization")
 	}
 	o := orgTunnelPolicy{Base: agentNetworkPolicy{SplitTunnel: true, CorporateCIDRs: []string{}}, Scope: tunnelScopeTagged, Tags: []string{}}
+	var nameResolution string
 	err := db.Pool.QueryRow(ctx,
-		`SELECT split_tunnel, block_direct_corporate_cidrs, tunnel_scope, tunnel_tags
+		`SELECT split_tunnel, block_direct_corporate_cidrs, tunnel_scope, tunnel_tags, name_resolution
 		   FROM org_network_policy WHERE org_id = $1`, orgID).
-		Scan(&o.Base.SplitTunnel, &o.Base.BlockDirectCorporateCIDRs, &o.Scope, &o.Tags)
+		Scan(&o.Base.SplitTunnel, &o.Base.BlockDirectCorporateCIDRs, &o.Scope, &o.Tags, &nameResolution)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
+	}
+	if nameResolution == nameResolutionAgent {
+		o.Base.NameResolution = nameResolutionAgent
 	}
 	if o.Base.BlockDirectCorporateCIDRs {
 		var cidrs, hosts []string
@@ -211,7 +234,7 @@ func loadAgentNetworkPolicy(ctx context.Context, db *database.PostgresDB, orgID 
 
 // loadDeviceNetworkPolicy is the policy the device agentID receives, with
 // always_on computed from its tags.
-func loadDeviceNetworkPolicy(ctx context.Context, db *database.PostgresDB, orgID, agentID string) (*agentNetworkPolicy, error) {
+func loadDeviceNetworkPolicy(ctx context.Context, db *database.PostgresDB, orgID, agentID string, enforceAssignment bool) (*agentNetworkPolicy, error) {
 	o, err := loadOrgTunnelPolicy(ctx, db, orgID)
 	if err != nil {
 		return nil, err
@@ -222,7 +245,15 @@ func loadDeviceNetworkPolicy(ctx context.Context, db *database.PostgresDB, orgID
 		agentID, orgID).Scan(&tags); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	return o.forDevice(tags), nil
+	p := o.forDevice(tags)
+	if p.NameResolution == nameResolutionAgent {
+		pins, err := loadDeviceNamePins(ctx, db, orgID, agentID, enforceAssignment)
+		if err != nil {
+			return nil, err
+		}
+		p.NamePins, p.NamePinsVersion = pins, namePinsVersion(pins)
+	}
+	return p, nil
 }
 
 // tunnelPolicyDevices counts the organization's active devices by whether

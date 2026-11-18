@@ -3,6 +3,7 @@ package access
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"sort"
 	"strings"
@@ -55,6 +56,27 @@ type NetworkTarget struct {
 	// Site is the slug of the site whose routers host the resource
 	// (network_targets.site_id); empty is the default site.
 	Site string `json:"site,omitempty"`
+	// PinIP is the stable overlay address the SERVER gave a resource with
+	// exactly one DNS name (migration 264), taken from nameResolutionPool. It
+	// is read-only: never accepted from a request (normalizeNetworkTarget drops
+	// it), set only from the stored column, and written into the service's
+	// intercept addresses only while the organization's name resolution is
+	// 'agent'. Empty means the resource has none, or the setting is off.
+	PinIP string `json:"pin_ip,omitempty"`
+}
+
+// nameResolutionPool is where pins come from: the top /16 of the tunneler's
+// 100.64.0.0/10 range. The tunneler hands out its own name addresses from the
+// bottom upward, so the two never meet.
+var nameResolutionPool = netip.MustParsePrefix("100.127.0.0/16")
+
+// pinnable reports whether the resource can have a pin: exactly one DNS name
+// that is not a wildcard, and nothing else it intercepts. A pin stands for one
+// name; a resource covering several names, hosts or ranges keeps being answered
+// by the tunneler.
+func (t NetworkTarget) pinnable() bool {
+	return len(t.DNSNames) == 1 && len(t.Hosts) == 0 && len(t.CIDRs) == 0 &&
+		!strings.HasPrefix(t.DNSNames[0], "*")
 }
 
 // hostLabel is one DNS label; a host name is one or more of them.
@@ -230,9 +252,16 @@ func portRangesData(rs []PortRange) []map[string]interface{} {
 // which addresses, ports and protocols it captures off its tun device and
 // carries over the overlay to this service.
 func interceptV1Data(t NetworkTarget) map[string]interface{} {
+	addrs := t.interceptAddresses()
+	if t.PinIP != "" {
+		// Beside the name, never instead of it: a device that does not know
+		// about pins (an older agent, Linux) still resolves the name and dials
+		// the service as before.
+		addrs = append(addrs, t.PinIP)
+	}
 	return map[string]interface{}{
 		"protocols":  t.Protocols,
-		"addresses":  t.interceptAddresses(),
+		"addresses":  addrs,
 		"portRanges": portRangesData(t.PortRanges),
 	}
 }
@@ -252,8 +281,15 @@ func hostV1Data(t NetworkTarget) map[string]interface{} {
 		d["forwardProtocol"] = true
 		d["allowedProtocols"] = t.Protocols
 	}
-	if t.ForwardAddress != "" {
-		d["address"] = t.ForwardAddress
+	forward := t.ForwardAddress
+	if forward == "" && t.PinIP != "" && len(t.DNSNames) == 1 {
+		// A dial to the pin names no host, so "forward what was dialed" would
+		// make the router dial the pin itself. A pinned resource has one name:
+		// forward to it, which is what the name-based dial reaches anyway.
+		forward = t.DNSNames[0]
+	}
+	if forward != "" {
+		d["address"] = forward
 	} else {
 		d["forwardAddress"] = true
 		d["allowedAddresses"] = t.interceptAddresses()

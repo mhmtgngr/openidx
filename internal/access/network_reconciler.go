@@ -36,11 +36,13 @@ func (rec *ZitiReconciler) loadDesiredNetworkServices(ctx context.Context) ([]De
 		//orgscope:ignore install-wide Ziti reconcile; each service is keyed by its application's globally-unique id and carries that row's org_id
 		`SELECT a.id::text, a.org_id::text, nt.hosts, COALESCE(nt.cidrs::text[], '{}'), nt.dns_names,
 		        nt.port_ranges, nt.protocols, COALESCE(nt.forward_address, ''), COALESCE(nt.forward_port, 0),
-		        COALESCE(rc.require_device_trust, false), COALESCE(st.slug, '')
+		        COALESCE(rc.require_device_trust, false), COALESCE(st.slug, ''),
+		        COALESCE(host(nt.pin_ip), ''), COALESCE(onp.name_resolution, 'tunnel')
 		   FROM applications a
 		   JOIN network_targets nt ON nt.application_id = a.id AND nt.org_id = a.org_id
 		   LEFT JOIN sites st ON st.id = nt.site_id
 		   LEFT JOIN resource_conditions rc ON rc.application_id = a.id AND rc.org_id = a.org_id
+		   LEFT JOIN org_network_policy onp ON onp.org_id = a.org_id
 		  WHERE a.kind = 'network' AND a.enabled = true AND a.org_id IS NOT NULL
 		  ORDER BY a.id`)
 	if err != nil {
@@ -48,20 +50,49 @@ func (rec *ZitiReconciler) loadDesiredNetworkServices(ctx context.Context) ([]De
 	}
 	defer rows.Close()
 	var out []DesiredNetworkService
+	var needPin []int
 	for rows.Next() {
 		var d DesiredNetworkService
 		var t NetworkTarget
 		var portRanges []byte
+		var pin, nameResolution string
 		if err := rows.Scan(&d.ApplicationID, &d.OrgID, &t.Hosts, &t.CIDRs, &t.DNSNames,
-			&portRanges, &t.Protocols, &t.ForwardAddress, &t.ForwardPort, &d.RequireDeviceTrust, &d.SiteSlug); err != nil {
+			&portRanges, &t.Protocols, &t.ForwardAddress, &t.ForwardPort, &d.RequireDeviceTrust, &d.SiteSlug,
+			&pin, &nameResolution); err != nil {
 			rec.logger.Warn("reconciler: scan network resource failed", zap.Error(err))
 			continue
 		}
 		if desired, ok := rec.desiredFromRow(d, t, portRanges); ok {
+			// A pin only while the organization asks the agent to answer names,
+			// and only for a resource that can have one. The stored pin is kept
+			// when the setting goes back to 'tunnel' (stable if it returns), but
+			// it leaves the service's addresses.
+			if nameResolution == nameResolutionAgent && desired.Target.pinnable() {
+				desired.Target.PinIP = pin
+				if pin == "" {
+					needPin = append(needPin, len(out))
+				}
+			}
 			out = append(out, desired)
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	// Allocate after the read, not inside it: the allocation is a write on
+	// another connection. A resource that cannot get one is converged without a
+	// pin (the tunneler keeps answering its name) and the warning says why.
+	for _, i := range needPin {
+		pin, err := allocatePin(ctx, rec.db, out[i].OrgID, out[i].ApplicationID)
+		if err != nil {
+			rec.logger.Warn("network resource has no pin: the tunneler keeps answering its name",
+				zap.String("svc", out[i].ServiceName), zap.String("application_id", logsafe.Clean(out[i].ApplicationID)), zap.Error(err))
+			continue
+		}
+		out[i].Target.PinIP = pin
+	}
+	return out, nil
 }
 
 // desiredFromRow turns one stored network resource into a desired service, or
@@ -158,15 +189,17 @@ func (rec *ZitiReconciler) noteNetworkDesired(desired []DesiredNetworkService) {
 func (rec *ZitiReconciler) ensureNetworkService(ctx context.Context, zm *ZitiManager, d DesiredNetworkService) error {
 	// Re-validate at emit time: what is written to Ziti is exactly the
 	// canonical, guard-checked target, whatever path produced d.
+	pin := d.Target.PinIP // a request can never carry one; only the stored column does
 	target, err := normalizeNetworkTarget(d.Target)
 	if err != nil {
 		return fmt.Errorf("network target refused: %w", err)
 	}
+	target.PinIP = pin
 	d.Target = target
 	// Build the configs once, gate exactly those maps, and write exactly
 	// those maps: nothing reaches the controller that the guard did not see.
 	interceptData, hostData := interceptV1Data(d.Target), hostV1Data(d.Target)
-	if errs := guardEmittedConfigs(interceptData, hostData); len(errs) > 0 {
+	if errs := guardEmittedConfigsPinned(interceptData, hostData, d.Target.PinIP); len(errs) > 0 {
 		return fmt.Errorf("network target refused: %s", strings.Join(errs, "; "))
 	}
 	interceptID, err := zm.EnsureConfig(ctx, d.ServiceName+"-intercept", "intercept.v1", interceptData)
