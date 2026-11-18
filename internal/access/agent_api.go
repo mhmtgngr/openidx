@@ -1816,7 +1816,7 @@ func (h *AgentAPIHandler) policyForActiveAgent(ctx context.Context, agentID stri
 		agentID, orgID).Scan(&status); err != nil || status != "active" {
 		return nil
 	}
-	p, err := loadDeviceNetworkPolicy(ctx, h.db, orgID, agentID)
+	p, err := loadDeviceNetworkPolicy(ctx, h.db, orgID, agentID, h.conf != nil && h.conf.AccessAssignmentEnforce)
 	if err != nil {
 		h.logger.Warn("could not read the tunnel policy for an agent", zap.Error(err))
 		return nil

@@ -16,6 +16,8 @@ export interface NetworkTarget {
   forward_port?: number
   /** Slug of the site whose routers host it; absent is the default site. */
   site?: string
+  /** The stable overlay address the server gave it; read-only, present only for a resource with exactly one DNS name. */
+  pin_ip?: string
 }
 
 export interface NetworkResource {
@@ -28,6 +30,8 @@ export interface NetworkResource {
   sync_status?: string
 }
 
+export type NameResolution = 'tunnel' | 'agent'
+
 export type TunnelScope = 'all' | 'tagged' | 'off'
 
 export interface NetworkPolicy {
@@ -38,6 +42,8 @@ export interface NetworkPolicy {
   tunnel_tags?: string[]
   split_tunnel: boolean
   block_direct_corporate_cidrs: boolean
+  /** Who answers the names of tunneled applications: the tunneler (default) or the agent. */
+  name_resolution?: NameResolution
   updated_at?: string
   /** The version devices receive; read-only. */
   version?: string

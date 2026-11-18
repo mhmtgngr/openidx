@@ -20,7 +20,7 @@ import { api } from '../lib/api'
 import { SiteSelect } from './site-select'
 import {
   EMPTY_DRAFT, draftFromTarget, formatPorts, targetFromDraft,
-  type NetworkPolicy, type NetworkResource, type TunnelScope, type NetworkTarget, type TargetDraft,
+  type NameResolution, type NetworkPolicy, type NetworkResource, type TunnelScope, type NetworkTarget, type TargetDraft,
 } from '../lib/network-target'
 
 // Network resources: the server side of the VPN replacement. A network
@@ -175,6 +175,30 @@ export function NetworkPolicyCard() {
       )}
     </fieldset>
   )
+  const names: NameResolution = data?.name_resolution ?? 'tunnel'
+  const namesControl = (
+    <fieldset className="space-y-2" data-testid="np-names">
+      <legend className="text-sm font-medium">{t('pages.networkResources.policy.names.title')}</legend>
+      <p className="text-xs text-muted-foreground">{t('pages.networkResources.policy.names.hint')}</p>
+      {(['tunnel', 'agent'] as NameResolution[]).map((v) => (
+        <label key={v} className="flex items-start gap-2 text-sm">
+          <input
+            type="radio"
+            name="np-names"
+            className="mt-1"
+            value={v}
+            checked={names === v}
+            disabled={save.isPending}
+            onChange={() => save.mutate({ name_resolution: v })}
+          />
+          <span>
+            {t(`pages.networkResources.policy.names.${v}`)}
+            <span className="block text-xs text-muted-foreground">{t(`pages.networkResources.policy.names.${v}Hint`)}</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
+  )
   const toggle = (key: 'split_tunnel' | 'block_direct_corporate_cidrs', id: string) => (
     <div className="flex items-start justify-between gap-4">
       <div>
@@ -201,6 +225,7 @@ export function NetworkPolicyCard() {
         ) : (
           <>
             {scopeControl}
+            {namesControl}
             {toggle('split_tunnel', 'np-split')}
             {data && !data.split_tunnel && (
               <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="np-full-tunnel-gap">
@@ -230,7 +255,8 @@ export function NetworkPolicyCard() {
 
 function summarize(t: NetworkTarget | null): string {
   if (!t) return ''
-  return [...t.hosts, ...t.cidrs, ...t.dns_names].join(', ')
+  const covered = [...t.hosts, ...t.cidrs, ...t.dns_names].join(', ')
+  return t.pin_ip ? `${covered} (${t.pin_ip})` : covered
 }
 
 /** NetworkResourcesPanel lists the organization's network resources and edits them. */

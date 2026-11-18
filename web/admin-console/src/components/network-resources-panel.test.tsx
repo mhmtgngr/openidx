@@ -161,6 +161,34 @@ describe('NetworkResourcesPanel', () => {
     expect(screen.getByTestId('np-block-scope')).toHaveTextContent('Linux')
   })
 
+  it('says who answers the names of tunneled applications, tunnel by default', async () => {
+    vi.mocked(api.put).mockResolvedValue({ always_on: false, tunnel_scope: 'tagged', tunnel_tags: ['eng'], split_tunnel: true, block_direct_corporate_cidrs: false, name_resolution: 'agent' })
+    render(<NetworkResourcesPanel />, { wrapper: wrapper() })
+    // The policy answer above names no name_resolution: it is the tunnel.
+    expect(await screen.findByRole('radio', { name: /The tunnel \(default\)/ })).toBeChecked()
+    const agent = screen.getByRole('radio', { name: /The agent, with a pinned address/ })
+    expect(agent).not.toBeChecked()
+    fireEvent.click(agent)
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/v1/access/network-policy', { name_resolution: 'agent' }),
+    )
+  })
+
+  it('shows the pin the server gave a resource, beside what it covers', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.endsWith('/network-resources')) {
+        return Promise.resolve({ resources: [{ ...resource, target: { ...resource.target, pin_ip: '100.127.0.10' } }], total: 1 })
+      }
+      if (url.endsWith('/network-policy')) {
+        return Promise.resolve({ always_on: false, tunnel_scope: 'tagged', tunnel_tags: [], split_tunnel: true, block_direct_corporate_cidrs: false, name_resolution: 'agent' })
+      }
+      return Promise.resolve([])
+    })
+    render(<NetworkResourcesPanel />, { wrapper: wrapper() })
+    expect(await screen.findByText('fs1.corp.example, 10.0.0.0/16 (100.127.0.10)')).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /The agent, with a pinned address/ })).toBeChecked()
+  })
+
   it('sets who the tunnel turns on for', async () => {
     vi.mocked(api.put).mockResolvedValue({ always_on: true, tunnel_scope: 'all', tunnel_tags: [], split_tunnel: true, block_direct_corporate_cidrs: false })
     render(<NetworkResourcesPanel />, { wrapper: wrapper() })
