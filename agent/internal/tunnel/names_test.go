@@ -240,7 +240,7 @@ func TestNamesRefusesWhatItShouldNotAnswer(t *testing.T) {
 	h.n.SetWanted(true, []NamePin{
 		wikiPin,
 		{Name: "openidx.corp.example", IP: "100.127.0.20", Service: ""},         // the agent's own server
-		{Name: "10.1.2.3", IP: "100.127.0.25"},                                  // an address, not a name
+		{Name: "198.51.100.3", IP: "100.127.0.25"},                                  // an address, not a name
 		{Name: "*.corp.example", IP: "100.127.0.21"},                            // a wildcard
 		{Name: "a'; Remove-Item C:\\ -Recurse; '.example", IP: "100.127.0.22"},  // an injection attempt
 		{Name: "bad-ip.corp.example", IP: "10.0.0.1"},                           // outside the pin pool
@@ -261,7 +261,7 @@ func TestNamesRefusesWhatItShouldNotAnswer(t *testing.T) {
 			t.Errorf("%s was not answered", ok)
 		}
 	}
-	for _, bad := range []string{"openidx.corp.example", "10.1.2.3", "*.corp.example", "bad-ip.corp.example", "tunnel-range.corp.example", "junk.corp.example", "nosvc.corp.example"} {
+	for _, bad := range []string{"openidx.corp.example", "198.51.100.3", "*.corp.example", "bad-ip.corp.example", "tunnel-range.corp.example", "junk.corp.example", "nosvc.corp.example"} {
 		if got[bad] {
 			t.Errorf("%s was answered", bad)
 		}
