@@ -35,6 +35,8 @@ func checkNames(ctx context.Context, p Probes, in Inputs) Check {
 		c.Status, c.Detail = StatusSkipped, "the app is the engine"
 	case in.Tunnel == nil || in.Tunnel.State != tunnel.StateConnected:
 		c.Status, c.Detail = StatusSkipped, "tunnel not connected"
+	case in.NamesByAgent:
+		c.Detail = "the agent answers the names of tunneled applications itself"
 	default:
 		ctx, cancel := context.WithTimeout(ctx, namesProbeTimeout)
 		defer cancel()

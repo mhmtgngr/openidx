@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"path/filepath"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -85,6 +87,7 @@ func (a *Agent) startTunnel(ctx context.Context) {
 	s := a.newTunnelSupervisor()
 	a.directBlock.Store(tunnel.NewDirectBlock())
 	a.tun.Store(s)
+	a.startNames(ctx, s)
 	a.applyTunnelEnablement()
 	a.logger.Info("tunnel supervisor ready", zap.String("mode", string(s.Mode())),
 		zap.Bool("enabled", s.Enabled()))
@@ -93,6 +96,53 @@ func (a *Agent) startTunnel(ctx context.Context) {
 			a.logger.Error("tunnel supervisor stopped", zap.Error(err))
 		}
 	}()
+}
+
+// startNames starts the manager that answers the names of tunneled
+// applications when the organization's policy asks for it. It sits idle (no
+// listener, no rule, no process) until then. The server the agent talks to is
+// never answered by it, so a wrong pin cannot cut the agent off.
+func (a *Agent) startNames(ctx context.Context, s *tunnel.Supervisor) {
+	var protect []string
+	if a.config != nil {
+		protect = protectedHosts(a.config.ServerURL)
+	}
+	n := tunnel.NewNames(a.logger, filepath.Join(tunnelDir(a.configDir), "names.active"), protect...)
+	a.names.Store(n)
+	// A policy that arrived before the tunnel was supervised is applied now.
+	if ap := a.netPolicy.Load(); ap != nil {
+		a.applyNameResolution(&ap.policy)
+	}
+	go n.Run(ctx, func() (bool, []string) {
+		st := s.Status()
+		return st.State == tunnel.StateConnected, st.Services
+	})
+}
+
+// protectedHosts are the names the agent must never answer itself: the server it
+// reports to. A pin that named it would send the agent's own traffic to an
+// address on the overlay.
+func protectedHosts(serverURL string) []string {
+	u, err := url.Parse(strings.TrimSpace(serverURL))
+	if err != nil || u.Hostname() == "" {
+		return nil
+	}
+	return []string{u.Hostname()}
+}
+
+// applyNameResolution hands the policy's name resolution to the manager. It
+// runs on every policy delivery, not only when the policy version moves,
+// because the pins are per device and change under the same version.
+func (a *Agent) applyNameResolution(p *OrgNetworkPolicy) {
+	n := a.names.Load()
+	if n == nil {
+		return
+	}
+	pins := make([]tunnel.NamePin, 0, len(p.NamePins))
+	for _, w := range p.NamePins {
+		pins = append(pins, tunnel.NamePin{Name: w.Name, IP: w.IP, Service: w.Service})
+	}
+	n.SetWanted(p.NameResolution == "agent", pins)
 }
 
 // applyTunnelEnablement turns the tunnel on when a trusted agent.json enables
@@ -141,6 +191,7 @@ func (a *Agent) applyNetworkPolicy(p *OrgNetworkPolicy) {
 	if p.Version == "" {
 		return
 	}
+	a.applyNameResolution(p)
 	a.policyMu.Lock()
 	defer a.policyMu.Unlock()
 	prev := a.netPolicy.Load()
@@ -242,6 +293,13 @@ func (a *Agent) TunnelStatus() *tunnel.Status {
 		}
 		st.PolicyGaps = append([]string(nil), ap.gaps...)
 		st.LastError = ap.err
+	}
+	if n := a.names.Load(); n != nil {
+		if ns := n.Status(); ns.Wanted && ns.State == tunnel.NamesDegraded {
+			// Asked for, and this device cannot do it (the reason is in the
+			// log and in the doctor's name check).
+			st.PolicyGaps = append(st.PolicyGaps, "name_resolution")
+		}
 	}
 	if st.LastError == "" && (st.State == tunnel.StateDegraded || st.State == tunnel.StateNotInstalled) {
 		st.LastError = s.Detail()

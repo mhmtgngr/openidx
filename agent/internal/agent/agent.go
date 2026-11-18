@@ -121,7 +121,10 @@ type Agent struct {
 	// touches the firewall.
 	netPolicy   atomic.Pointer[appliedPolicy]
 	directBlock atomic.Pointer[tunnel.DirectBlock]
-	policyMu    sync.Mutex
+	// names answers the names of tunneled applications itself when the
+	// organization asks for it (tunnel.Names); nil where no tunnel is supervised.
+	names    atomic.Pointer[tunnel.Names]
+	policyMu sync.Mutex
 
 	// deviceKey signs posture reports once loaded (device_key.go).
 	deviceKey       devicekey.Key

@@ -315,9 +315,32 @@ when the tunnel is not connected, the reason first.
   the connection itself (and an application given by address) works. The doctor
   finds this by asking an address nobody on the device owns
   (`100.64.0.77:53`): nothing legitimate answers there, so any reply is a driver.
-  TCP/53 is not intercepted. The fix is on the VPN side: exempt the tunneler's
+  TCP/53 is not intercepted. Two fixes: set the organization's **name
+  resolution** to `agent` (below), or, on the VPN side, exempt the tunneler's
   DNS range (100.64.0.0/10) from the DNS enforcement, or define the resource by
   address instead of name.
+- **Name resolution by the agent** (Windows, organization setting
+  `name_resolution: agent`). The server gives each single-name network resource
+  a stable overlay address, a *pin* from 100.127.0.0/16, that the service
+  intercepts next to its name, and sends this device the name/pin/service
+  triples it may dial. The agent then answers those names itself: a small DNS
+  responder on `127.64.0.2:53` (UDP and TCP; an A record for a pinned name,
+  "no data" for other types of it, REFUSED for everything else, nothing
+  forwarded), and one NRPT rule per name (comment `Added by openidx-agent`)
+  that replaces the tunneler's rule for that name. Loopback is not reached by
+  the VPN's DNS enforcement (measured with GlobalProtect through the system
+  resolver). It will not claim a name it cannot prove: it first routes a
+  reserved probe name (`openidx-selftest.invalid`) to its responder and
+  resolves it the way an application would; if the answer does not come from
+  the agent (a client that blocks loopback DNS too), nothing else is touched,
+  the device reports the gap `name_resolution`, and the check repeats every two
+  minutes. It answers a pin only while the tunneler lists the pin's service
+  among those this device may dial, never the server the agent reports to, and
+  only names and addresses that pass a strict check (no wildcards, no address
+  outside the pool). When the tunnel goes down or the setting goes back to
+  `tunnel` the rules are removed (and the tunneler's put back if it is up);
+  `tunnel-cleanup` and the next start remove what a crash left. Wildcard and
+  multi-name resources have no pin and stay with the tunneler's DNS.
 - **Two tunnelers.** The agent's runs with `-P openidx`; anything else on the
   machine uses its own socket and is left alone. Both may intercept the same
   addresses if they are given overlapping identities.

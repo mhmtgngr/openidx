@@ -9,10 +9,11 @@ import (
 )
 
 // cleanupScript removes what a killed ziti-edge-tunnel can leave behind: the
-// NRPT rules it adds for overlay names (their comment names the tunneler) and
-// a Wintun adapter left in the system. Each step tolerates absence.
+// NRPT rules it adds for overlay names (their comment names the tunneler), the
+// rules the agent itself wrote to answer pinned names (names.go), and a Wintun
+// adapter left in the system. Each step tolerates absence.
 const cleanupScript = `$ErrorActionPreference='SilentlyContinue'
-Get-DnsClientNrptRule | Where-Object { $_.Comment -like '*ziti*' } | ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force }
+Get-DnsClientNrptRule | Where-Object { $_.Comment -like '*ziti*' -or $_.Comment -eq 'Added by openidx-agent' } | ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force }
 Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceDescription -like 'Wintun*' -or $_.Name -like 'ziti-tun*' } | ForEach-Object { Disable-NetAdapter -Name $_.Name -Confirm:$false }
 Clear-DnsClientCache
 exit 0`
