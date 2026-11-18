@@ -590,6 +590,10 @@ const en = {
         title: 'The device cannot find the OpenIDX server on its network.',
         action: 'Check that the device is online; if other sites work, try another network and tell IT.',
       },
+      DNS_INTERCEPTED: {
+        title: 'Other software on the device (usually a VPN client) answers DNS questions meant for the secure tunnel.',
+        action: 'Applications opened by address still work. For names, ask IT to exempt the tunnel\'s DNS range (100.64.0.0/10) in the VPN client\'s DNS enforcement.',
+      },
       TLS_INTERCEPTED: {
         title: 'The network is intercepting the secure connection, or wants you to sign in first.',
         action: 'Open a browser on the device and complete any Wi-Fi sign-in page. On a company network, ask IT about TLS inspection.',

@@ -587,6 +587,10 @@ const tr: typeof en = {
         title: 'Cihaz bulunduğu ağda OpenIDX sunucusunu bulamıyor.',
         action: 'Cihazın internete bağlı olduğunu kontrol edin; başka siteler açılıyorsa başka bir ağ deneyin ve BT\'ye bildirin.',
       },
+      DNS_INTERCEPTED: {
+        title: 'Cihazdaki başka bir yazılım (genellikle bir VPN istemcisi) güvenli tünele giden DNS sorularını kendisi cevaplıyor.',
+        action: 'Adresle açılan uygulamalar çalışmaya devam eder. Adlar için BT\'den VPN istemcisinin DNS zorlamasında tünelin DNS aralığı (100.64.0.0/10) için istisna tanımlamasını isteyin.',
+      },
       TLS_INTERCEPTED: {
         title: 'Ağ güvenli bağlantının arasına giriyor ya da önce oturum açmanızı istiyor.',
         action: 'Cihazda bir tarayıcı açıp varsa Wi-Fi giriş sayfasını tamamlayın. Şirket ağındaysanız BT\'ye TLS denetimini sorun.',

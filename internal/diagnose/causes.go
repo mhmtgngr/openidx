@@ -23,6 +23,10 @@ const (
 	CauseProxyBlock     = "PROXY_BLOCK"
 	CauseClockSkew      = "CLOCK_SKEW"
 	CauseServerError    = "SERVER_ERROR"
+	// DNS_INTERCEPTED: other software on the device answers DNS meant for the
+	// tunnel (a VPN client that enforces its own DNS). Addresses still work,
+	// names of tunneled applications do not.
+	CauseDNSIntercepted = "DNS_INTERCEPTED"
 
 	// The tunnel.
 	CauseTunnelDown         = "TUNNEL_DOWN"
@@ -114,6 +118,7 @@ var catalog = map[string]causeSpec{
 	CauseProxyBlock:     {33, []Fix{fx(FixAskProxy, TierUser)}},
 	CauseNetworkBlocked: {34, []Fix{fx(FixChangeNetwork, TierUser)}},
 	CauseServerError:    {35, []Fix{fx(FixWait, TierUser)}},
+	CauseDNSIntercepted: {36, []Fix{fx(FixContactIT, TierUser)}},
 
 	CauseIdentityExpired:    {40, []Fix{fx(FixReenroll, TierSafeFix)}},
 	CauseTunnelNotInstalled: {41, []Fix{fx(FixInstallTunnel, TierUser)}},

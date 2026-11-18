@@ -99,3 +99,37 @@ func TestSupportCodeWireFormat(t *testing.T) {
 		t.Errorf("support code format changed; codes already handed out would decode wrongly.\ngot:\n%s", out)
 	}
 }
+
+// Adding the 25th code made the bit array four bytes instead of three, so the
+// same set of codes is now written differently. Codes people already read to
+// IT must still decode, in the agent's reader and in the server's.
+func TestSupportCodesIssuedWithTwentyFourCodesStillDecode(t *testing.T) {
+	raw, err := os.ReadFile("testdata/support_codes_issued_24.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var issued map[string][]string
+	if err := json.Unmarshal(raw, &issued); err != nil {
+		t.Fatal(err)
+	}
+	if len(issued) == 0 {
+		t.Fatal("no issued codes in the fixture")
+	}
+	for code, want := range issued {
+		got, err := DecodeSupportCode(code)
+		if err != nil {
+			t.Errorf("%s: %v", code, err)
+			continue
+		}
+		if len(got) != len(want) {
+			t.Errorf("%s decodes to %v, want %v", code, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s decodes to %v, want %v", code, got, want)
+				break
+			}
+		}
+	}
+}

@@ -35,6 +35,9 @@ func (okProbes) HTTPGet(context.Context, string) (doctor.HTTPResult, error) {
 }
 func (okProbes) Proxy(string) *url.URL { return nil }
 func (okProbes) Now() time.Time        { return time.Now() }
+func (okProbes) DNSQuery(context.Context, string, string) (doctor.DNSAnswer, error) {
+	return doctor.DNSAnswer{}, context.DeadlineExceeded
+}
 
 type stubActions struct{ onRestart func() }
 

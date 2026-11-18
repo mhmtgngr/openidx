@@ -305,6 +305,19 @@ when the tunnel is not connected, the reason first.
 - **`degraded`, "the tunneler exited …; waiting to restart it".** It is
   crash-looping; its log says why. A common cause on Windows is another
   program holding a Wintun adapter of the same name; on Linux, no root.
+- **Applications open by address but not by name next to a VPN client.** The
+  doctor shows a warning, "Tunnel name lookup" (`DNS_INTERCEPTED`). Some VPN
+  clients enforce their own DNS with a network driver that answers every UDP/53
+  question on the machine, whatever address it was sent to: GlobalProtect
+  answered NXDOMAIN to 8.8.8.8, to the router and to the tunneler's resolver
+  (100.64.0.2) alike, and logged `EnforceDns is enabled`. The question never
+  reaches the tunneler, so names of tunneled applications do not resolve, while
+  the connection itself (and an application given by address) works. The doctor
+  finds this by asking an address nobody on the device owns
+  (`100.64.0.77:53`): nothing legitimate answers there, so any reply is a driver.
+  TCP/53 is not intercepted. The fix is on the VPN side: exempt the tunneler's
+  DNS range (100.64.0.0/10) from the DNS enforcement, or define the resource by
+  address instead of name.
 - **Two tunnelers.** The agent's runs with `-P openidx`; anything else on the
   machine uses its own socket and is left alone. Both may intercept the same
   addresses if they are given overlapping identities.

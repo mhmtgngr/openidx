@@ -93,6 +93,7 @@ func Run(ctx context.Context, in Inputs, p Probes, opt Options) Bundle {
 	})
 	add(CheckService, func() Check { return checkService(in) })
 	add(CheckTunnel, func() Check { return checkTunnel(in) })
+	add(CheckNames, func() Check { return checkNames(ctx, p, in) })
 	return b
 }
 

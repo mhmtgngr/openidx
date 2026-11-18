@@ -23,7 +23,7 @@ var doctorCodes = []string{
 	"HTTP_TIMEOUT", "HTTP_FAIL", "CLOCK_SKEW", "IDENTITY_MISSING",
 	"IDENTITY_EXPIRED", "IDENTITY_EXPIRING", "IDENTITY_INVALID",
 	"SERVICE_NOT_RUNNING", "TUNNEL_DOWN", "TUNNEL_NOT_INSTALLED",
-	"TUNNEL_OFF", "INTERNAL",
+	"TUNNEL_OFF", "INTERNAL", "DNS_INTERCEPTED",
 }
 
 // ErrSupportCode is wrapped by every reason a support code is refused.

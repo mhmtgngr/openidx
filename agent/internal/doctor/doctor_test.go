@@ -37,6 +37,16 @@ type fakeProbes struct {
 	httpDate   time.Time
 	proxy      *url.URL
 	panicHTTP  bool
+	// dnsAnswers makes an address nobody owns answer a DNS question, as a VPN
+	// client that hijacks UDP/53 does.
+	dnsAnswers bool
+}
+
+func (f fakeProbes) DNSQuery(context.Context, string, string) (DNSAnswer, error) {
+	if f.dnsAnswers {
+		return DNSAnswer{RCode: 3}, nil
+	}
+	return DNSAnswer{}, context.DeadlineExceeded
 }
 
 func (f fakeProbes) Resolve(context.Context, string) ([]string, error) {
