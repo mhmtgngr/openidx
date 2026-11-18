@@ -42,6 +42,10 @@ type Inputs struct {
 	// off, so those two checks have nothing to say, and nothing here can be
 	// repaired from inside a sandbox.
 	Mobile bool
+	// NamesByAgent is true while this agent answers the names of tunneled
+	// applications itself (tunnel.Names is active): another program may still
+	// be answering the tunnel's DNS, and it no longer matters.
+	NamesByAgent bool
 }
 
 func checkConfig(in Inputs) Check {

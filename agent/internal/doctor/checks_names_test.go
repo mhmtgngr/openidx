@@ -27,6 +27,20 @@ func TestNamesCheckPassesWhenNothingAnswers(t *testing.T) {
 	}
 }
 
+func TestNamesCheckPassesWhenTheAgentAnswersTheNamesItself(t *testing.T) {
+	// Another program answers the tunneler's DNS, and the agent answers the names
+	// of tunneled applications itself, so the interception no longer matters.
+	c := checkNames(context.Background(), fakeProbes{dnsAnswers: true}, Inputs{Tunnel: connected(), NamesByAgent: true})
+	if c.Status != StatusPass || c.Code != "" {
+		t.Fatalf("got %s/%s, want pass", c.Status, c.Code)
+	}
+	// Without it the same device is a finding.
+	c = checkNames(context.Background(), fakeProbes{dnsAnswers: true}, Inputs{Tunnel: connected()})
+	if c.Status != StatusWarn {
+		t.Fatalf("got %s, want warn", c.Status)
+	}
+}
+
 func TestNamesCheckIsSkippedWithoutAConnectedTunnel(t *testing.T) {
 	cases := map[string]Inputs{
 		"no tunnel status": {},

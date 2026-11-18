@@ -155,6 +155,23 @@ type OrgNetworkPolicy struct {
 	// in its tunnel status. A server older than the field sends none, and
 	// then only AlwaysOn is read, as before.
 	Version string `json:"version,omitempty"`
+
+	// NameResolution "agent" asks this agent to answer the names in NamePins
+	// itself (internal/tunnel/names.go); absent or anything else leaves the
+	// names to the tunneler, as before. NamePins are the names this device may
+	// dial, each with a stable overlay address and the overlay service behind
+	// it; NamePinsVersion is their digest (they are per device, so they are not
+	// part of Version).
+	NameResolution  string        `json:"name_resolution,omitempty"`
+	NamePins        []NamePinWire `json:"name_pins,omitempty"`
+	NamePinsVersion string        `json:"name_pins_version,omitempty"`
+}
+
+// NamePinWire is one entry of OrgNetworkPolicy.NamePins.
+type NamePinWire struct {
+	Name    string `json:"name"`
+	IP      string `json:"ip"`
+	Service string `json:"service,omitempty"`
 }
 
 // RemoteSupportBlock is the in-flight remote-support session pointer the server
