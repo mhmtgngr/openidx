@@ -178,19 +178,19 @@ func TestNamePinsOnTheMigratedSchema(t *testing.T) {
 	names := func(pins []namePin) []string {
 		var out []string
 		for _, p := range pins {
-			out = append(out, p.Name+"="+p.IP)
+			out = append(out, p.Name+"="+p.IP+"@"+p.Service)
 		}
 		return out
 	}
 	// Assignment not enforced: every enrolled device may dial every network
 	// service, so it is told every pin, in name order.
 	all, err := loadDeviceNamePins(ctx, db, org, "agent-pin-2", false)
-	if err != nil || !reflect.DeepEqual(names(all), []string{"extra.corp.example=" + p2, "wiki.corp.example=" + p1}) {
+	if err != nil || !reflect.DeepEqual(names(all), []string{"extra.corp.example=" + p2 + "@" + networkServiceName(extra), "wiki.corp.example=" + p1 + "@" + networkServiceName(wiki)}) {
 		t.Errorf("unenforced pins = %v, %v", names(all), err)
 	}
 	// Enforced: only what the enrolling person is assigned.
 	one, err := loadDeviceNamePins(ctx, db, org, "agent-pin-1", true)
-	if err != nil || !reflect.DeepEqual(names(one), []string{"wiki.corp.example=" + p1}) {
+	if err != nil || !reflect.DeepEqual(names(one), []string{"wiki.corp.example=" + p1 + "@" + networkServiceName(wiki)}) {
 		t.Errorf("pins for the assigned person = %v, %v", names(one), err)
 	}
 	if none, err := loadDeviceNamePins(ctx, db, org, "agent-pin-2", true); err != nil || len(none) != 0 {

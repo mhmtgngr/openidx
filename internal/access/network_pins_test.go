@@ -156,6 +156,10 @@ func TestNamePinsVersion(t *testing.T) {
 	if namePinsVersion(changed) == v {
 		t.Error("a different address gave the same version")
 	}
+	moved := []namePin{{Name: "a.example", IP: "100.127.0.10", Service: "openidx-net-1"}, {Name: "b.example", IP: "100.127.0.11"}}
+	if namePinsVersion(moved) == v {
+		t.Error("a different service gave the same version")
+	}
 }
 
 // configData is the data the controller holds for the named config, as JSON

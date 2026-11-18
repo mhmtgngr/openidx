@@ -88,9 +88,14 @@ func allocatePin(ctx context.Context, db *database.PostgresDB, orgID, appID stri
 }
 
 // namePin is one name the agent answers itself and the address it answers with.
+// Service is the overlay service behind it: a device only answers the name while
+// its tunneler lists that service among those it may dial, so a resource the
+// reconciler refused (or one the device cannot dial) is never answered with an
+// address that leads nowhere.
 type namePin struct {
-	Name string `json:"name"`
-	IP   string `json:"ip"`
+	Name    string `json:"name"`
+	IP      string `json:"ip"`
+	Service string `json:"service,omitempty"`
 }
 
 // namePinsVersion is the digest of a set of pins (16 hex characters of a
@@ -103,7 +108,7 @@ func namePinsVersion(pins []namePin) string {
 	}
 	h := sha256.New()
 	for _, p := range pins {
-		fmt.Fprintf(h, "%s=%s\n", p.Name, p.IP)
+		fmt.Fprintf(h, "%s=%s=%s\n", p.Name, p.IP, p.Service)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
@@ -140,7 +145,7 @@ func loadDeviceNamePins(ctx context.Context, db *database.PostgresDB, orgID, age
 		}
 	}
 	rows, err := db.Pool.Query(ctx,
-		`SELECT lower(nt.dns_names[1]), host(nt.pin_ip)
+		`SELECT lower(nt.dns_names[1]), host(nt.pin_ip), a.id::text
 		   FROM network_targets nt
 		   JOIN applications a ON a.id = nt.application_id AND a.org_id = nt.org_id
 		  WHERE nt.org_id = $1 AND a.kind = 'network' AND a.enabled = true
@@ -157,9 +162,11 @@ func loadDeviceNamePins(ctx context.Context, db *database.PostgresDB, orgID, age
 	var pins []namePin
 	for rows.Next() {
 		var p namePin
-		if err := rows.Scan(&p.Name, &p.IP); err != nil {
+		var appID string
+		if err := rows.Scan(&p.Name, &p.IP, &appID); err != nil {
 			return nil, err
 		}
+		p.Service = networkServiceName(appID)
 		pins = append(pins, p)
 	}
 	if err := rows.Err(); err != nil {
