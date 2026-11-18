@@ -199,6 +199,12 @@ type ZitiReconciler struct {
 	// every 30s, but a full controller listing does not need to run that often.
 	lastMirrorRefresh time.Time
 
+	// netDesiredSig is the sorted, comma-joined set of network services the
+	// last pass wanted, and netDesiredKnown whether a pass has set it; the
+	// network stage logs when the set changes (guarded by statusMu).
+	netDesiredSig   string
+	netDesiredKnown bool
+
 	// loadNetwork overrides how network resources are loaded (tests); nil
 	// means loadDesiredNetworkServices.
 	loadNetwork func(context.Context) ([]DesiredNetworkService, error)
