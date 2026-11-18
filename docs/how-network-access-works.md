@@ -98,7 +98,7 @@ who answers:
 | Setting | What happens |
 | --- | --- |
 | **The tunnel** (default) | Nothing changes. |
-| **The agent, with a pinned address** | Each resource with **exactly one DNS name** (no wildcard, no hosts or ranges) gets a *pin*: a stable overlay address from `100.127.0.0/16`, shown beside the resource and unique inside your organization. The service intercepts the name **and** the pin, so a device that does not know about pins keeps working as before. A device is told only the pins of resources it can dial (with assignment enforcement on, those it is assigned), and answers those names itself. |
+| **The agent, with a pinned address** | Each resource with **exactly one DNS name** (no wildcard, no hosts or ranges) gets a *pin*: a stable overlay address from `100.127.0.0/16`, shown beside the resource and unique across the whole install (every organization shares one overlay). The service intercepts the name **and** the pin, so a device that does not know about pins keeps working as before. A device is told only the pins of resources it can dial (with assignment enforcement on, those it is assigned), and answers those names itself. |
 
 Notes for the administrator:
 

@@ -5,7 +5,8 @@
   policy has a new choice, `name_resolution`: `tunnel` (the default, nothing changes)
   or `agent`. With `agent`, every network resource with exactly one DNS name (no
   wildcard, hosts or ranges) gets a *pin*, a stable overlay address from
-  `100.127.0.0/16`, unique per organization and shown beside the resource
+  `100.127.0.0/16`, unique across the whole install (every organization shares one
+  overlay) and shown beside the resource
   (`pin_ip`, read-only). The service intercepts the name and the pin, and the router
   forwards a dial of the pin to the name, so a device that knows nothing about pins
   keeps working as before. The policy a device receives carries `name_resolution` and

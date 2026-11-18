@@ -11256,7 +11256,7 @@ components:
           readOnly: true
           description: >-
             The stable overlay address the server gave a resource with exactly
-            one DNS name (from 100.127.0.0/16, unique per organization). Read
+            one DNS name (from 100.127.0.0/16, unique across the whole install). Read
             only: a value in a request is ignored. Allocated once an
             organization sets name_resolution to agent, and kept if it is set
             back.

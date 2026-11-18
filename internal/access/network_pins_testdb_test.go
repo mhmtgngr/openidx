@@ -73,7 +73,7 @@ func TestNamePinsOnTheMigratedSchema(t *testing.T) {
 		t.Error("the database accepted a pin outside the pool")
 	}
 	if _, err := db.Pool.Exec(ctx, `UPDATE network_targets SET pin_ip = $2::inet WHERE application_id = $1`, multi, p1); err == nil {
-		t.Error("the database accepted the same pin twice in one organization")
+		t.Error("the database accepted the same pin twice")
 	}
 
 	// ---- the reconciler's view ----
@@ -126,6 +126,33 @@ func TestNamePinsOnTheMigratedSchema(t *testing.T) {
 		t.Errorf("the freed address was not reused: %q, %v (want %s)", pin, err, p2)
 	}
 	hr = extra // hr's target is gone; the extra resource took its pin
+
+	// Every organization shares one overlay, and a device's tunneler keeps one
+	// intercept per address: a second organization must never be handed an
+	// address another one holds, and the database must refuse it if it tries.
+	const org2 = "00000000-0000-0000-0000-000000000020"
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO organizations (id, name, slug) VALUES ($1, 'Second org', 'second-org')`, org2); err != nil {
+		t.Fatalf("seed second organization: %v", err)
+	}
+	var otherApp string
+	if err := db.Pool.QueryRow(ctx, `INSERT INTO applications (client_id, name, type, kind, org_id)
+		VALUES ('pin-other', 'Other wiki', 'network', 'network', $1) RETURNING id::text`, org2).Scan(&otherApp); err != nil {
+		t.Fatalf("seed other org's app: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO network_targets (application_id, org_id, hosts, cidrs, dns_names, port_ranges, protocols)
+		VALUES ($1, $2, '{}', '{}'::cidr[], '{wiki.other.example}', '[{"low":443,"high":443}]', '{tcp}')`, otherApp, org2); err != nil {
+		t.Fatalf("seed other org's target: %v", err)
+	}
+	otherPin, err := allocatePin(ctx, db, org2, otherApp)
+	if err != nil || otherPin == p1 || otherPin == p2 {
+		t.Fatalf("the second organization was given %q (%v); %s and %s belong to the first", otherPin, err, p1, p2)
+	}
+	if otherPin != "100.127.0.12" {
+		t.Errorf("the second organization's pin = %s, want the lowest address free anywhere, 100.127.0.12", otherPin)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE network_targets SET pin_ip = $2::inet WHERE application_id = $1`, otherApp, p1); err == nil {
+		t.Error("the database accepted another organization's pin")
+	}
 
 	// ---- what a device is told ----
 	var u1, u2 string

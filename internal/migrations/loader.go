@@ -1871,7 +1871,7 @@ func allMigrations() []*Migration {
 		{
 			Version:     264,
 			Name:        "name_resolution_pins",
-			Description: "Who answers the names of tunneled applications. org_network_policy.name_resolution ('tunnel', the default and today's behavior, or 'agent') and network_targets.pin_ip, a stable overlay address from 100.127.0.0/16 the reconciler gives a resource with exactly one DNS name, unique per organization and constrained to that range. Next to a VPN client that enforces its own DNS the tunneler never sees the question; with the setting on, the agent answers the pinned names itself. Nothing is backfilled and nothing changes until an organization turns it on.",
+			Description: "Who answers the names of tunneled applications. org_network_policy.name_resolution ('tunnel', the default and today's behavior, or 'agent') and network_targets.pin_ip, a stable overlay address from 100.127.0.0/16 the reconciler gives a resource with exactly one DNS name, unique across the whole install (all organizations share one overlay) and constrained to that range. Next to a VPN client that enforces its own DNS the tunneler never sees the question; with the setting on, the agent answers the pinned names itself. Nothing is backfilled and nothing changes until an organization turns it on.",
 			UpSQL:       nameResolutionUp,
 			DownSQL:     nameResolutionDown,
 		},

@@ -20,14 +20,14 @@ func TestMigrationV264NameResolutionPinsShape(t *testing.T) {
 		"CHECK (name_resolution IN ('tunnel', 'agent'))",
 		"ADD COLUMN IF NOT EXISTS pin_ip INET",
 		"pin_ip << '100.127.0.0/16'::inet",
-		"ON network_targets (org_id, pin_ip) WHERE pin_ip IS NOT NULL",
+		"ON network_targets (pin_ip) WHERE pin_ip IS NOT NULL",
 	} {
 		if !strings.Contains(mig.UpSQL, want) {
 			t.Errorf("v264 up lacks %q", want)
 		}
 	}
 	for _, want := range []string{
-		"DROP COLUMN IF EXISTS pin_ip", "DROP COLUMN IF EXISTS name_resolution", "DROP INDEX IF EXISTS network_targets_org_pin_ip",
+		"DROP COLUMN IF EXISTS pin_ip", "DROP COLUMN IF EXISTS name_resolution", "DROP INDEX IF EXISTS network_targets_pin_ip",
 	} {
 		if !strings.Contains(mig.DownSQL, want) {
 			t.Errorf("v264 down lacks %q", want)

@@ -38,10 +38,15 @@ const firstPinOffset = 10
 const maxPinAttempts = 3
 
 // allocatePin gives the resource its pin if it has none and returns it: the
-// lowest free address of the pool in the resource's organization. It is stable
-// (an existing pin is returned as it is, whatever the setting is now) and safe
-// to race: the unique index (org_id, pin_ip) refuses a second writer, which
-// reads again. ctx is a bypass context (the reconciler runs install-wide).
+// lowest address of the pool that no resource of ANY organization holds. All
+// organizations share one overlay, and the tunneler on a device keeps one
+// intercept per address, so two organizations' services intercepting the same
+// pin would send one's traffic to the other's backend: uniqueness is install
+// wide (the index is on pin_ip alone), and so is the search, which therefore
+// has to see every organization's rows (a bypass context, as the reconciler
+// runs). It is stable (an existing pin is returned as it is, whatever the
+// setting is now) and safe to race: the unique index refuses a second writer,
+// which reads again.
 func allocatePin(ctx context.Context, db *database.PostgresDB, orgID, appID string) (string, error) {
 	ctx = orgctx.WithBypassRLS(ctx)
 	for attempt := 0; attempt < maxPinAttempts; attempt++ {
@@ -51,7 +56,7 @@ func allocatePin(ctx context.Context, db *database.PostgresDB, orgID, appID stri
 			`UPDATE network_targets SET pin_ip = (
 			    SELECT ('100.127.0.0'::inet + n) FROM generate_series($3::int, 65534) AS n
 			     WHERE NOT EXISTS (SELECT 1 FROM network_targets x
-			                        WHERE x.org_id = $2 AND x.pin_ip = ('100.127.0.0'::inet + n))
+			                        WHERE x.pin_ip = ('100.127.0.0'::inet + n))
 			     ORDER BY n LIMIT 1)
 			  WHERE application_id = $1 AND org_id = $2 AND pin_ip IS NULL
 			  RETURNING host(pin_ip)`, appID, orgID, firstPinOffset).Scan(&pin)
@@ -60,7 +65,7 @@ func allocatePin(ctx context.Context, db *database.PostgresDB, orgID, appID stri
 		case err == nil && pin != nil:
 			return *pin, nil
 		case err == nil:
-			return "", errors.New("the pin pool of this organization is full")
+			return "", errors.New("the pin pool is full")
 		case errors.As(err, &pgErr) && pgErr.Code == "23505":
 			continue // another writer took that address; read the next free one
 		case errors.Is(err, pgx.ErrNoRows):

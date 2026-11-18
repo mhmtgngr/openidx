@@ -13,7 +13,11 @@ package migrations
 //   - network_targets.pin_ip: a stable overlay address the server gives a
 //     resource that has exactly one DNS name, taken from 100.127.0.0/16. It is
 //     added to the service's intercept addresses, so a device that resolves the
-//     name to the pin reaches the same service. Unique per organization; the
+//     name to the pin reaches the same service. Unique across the WHOLE
+//     install, not per organization: every organization shares one overlay (one
+//     controller, one address space on the device's tun), so two services that
+//     intercept the same address would let the tunneler send one organization's
+//     traffic to another's backend. The
 //     CHECK keeps a stray write from putting anything else in the column.
 //
 // Nothing is backfilled: pins are allocated by the reconciler, and only for an
@@ -28,12 +32,12 @@ ALTER TABLE network_targets ADD COLUMN IF NOT EXISTS pin_ip INET;
 ALTER TABLE network_targets DROP CONSTRAINT IF EXISTS network_targets_pin_ip_check;
 ALTER TABLE network_targets ADD CONSTRAINT network_targets_pin_ip_check
   CHECK (pin_ip IS NULL OR pin_ip << '100.127.0.0/16'::inet);
-CREATE UNIQUE INDEX IF NOT EXISTS network_targets_org_pin_ip
-  ON network_targets (org_id, pin_ip) WHERE pin_ip IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS network_targets_pin_ip
+  ON network_targets (pin_ip) WHERE pin_ip IS NOT NULL;
 `
 
 var nameResolutionDown = `-- Rollback migration 264.
-DROP INDEX IF EXISTS network_targets_org_pin_ip;
+DROP INDEX IF EXISTS network_targets_pin_ip;
 ALTER TABLE network_targets DROP CONSTRAINT IF EXISTS network_targets_pin_ip_check;
 ALTER TABLE network_targets DROP COLUMN IF EXISTS pin_ip;
 ALTER TABLE org_network_policy DROP CONSTRAINT IF EXISTS org_network_policy_name_resolution_check;
