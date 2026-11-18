@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -55,23 +57,88 @@ func (rec *ZitiReconciler) loadDesiredNetworkServices(ctx context.Context) ([]De
 			rec.logger.Warn("reconciler: scan network resource failed", zap.Error(err))
 			continue
 		}
-		d.ServiceName = networkServiceName(d.ApplicationID)
-		if len(portRanges) > 0 {
-			if err := json.Unmarshal(portRanges, &t.PortRanges); err != nil {
-				rec.setStatus(d.ServiceName, "error: port_ranges does not parse: "+err.Error())
-				continue
-			}
+		if desired, ok := rec.desiredFromRow(d, t, portRanges); ok {
+			out = append(out, desired)
 		}
-		t.ApplicationID = d.ApplicationID
-		norm, err := normalizeNetworkTarget(t)
-		if err != nil {
-			rec.setStatus(d.ServiceName, "error: "+err.Error())
-			continue
-		}
-		d.Target = norm
-		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// desiredFromRow turns one stored network resource into a desired service, or
+// says why it is left out. A resource left out used to leave no trace but a
+// status in memory, which the admin API shows only for a resource somebody
+// opens; now the first pass that leaves it out says so in the log, with the
+// reason, and so does the pass that lets it back in.
+func (rec *ZitiReconciler) desiredFromRow(d DesiredNetworkService, t NetworkTarget, portRanges []byte) (DesiredNetworkService, bool) {
+	d.ServiceName = networkServiceName(d.ApplicationID)
+	if len(portRanges) > 0 {
+		if err := json.Unmarshal(portRanges, &t.PortRanges); err != nil {
+			rec.noteNetworkStatus(d, "error: port_ranges does not parse: "+err.Error())
+			return d, false
+		}
+	}
+	t.ApplicationID = d.ApplicationID
+	norm, err := normalizeNetworkTarget(t)
+	if err != nil {
+		rec.noteNetworkStatus(d, "error: "+err.Error())
+		return d, false
+	}
+	d.Target = norm
+	return d, true
+}
+
+// noteNetworkStatus records a network service's converge status and logs it
+// when it differs from the last one recorded: an error at WARN, the first
+// "synced" after anything else at INFO. A resource that stays in the same state
+// is not logged again, so a broken resource costs one line, not one every 30
+// seconds. It reports whether the status changed.
+func (rec *ZitiReconciler) noteNetworkStatus(d DesiredNetworkService, status string) bool {
+	rec.statusMu.Lock()
+	prev, had := rec.status[d.ServiceName]
+	rec.status[d.ServiceName] = status
+	rec.statusMu.Unlock()
+	if had && prev == status {
+		return false
+	}
+	fields := []zap.Field{
+		zap.String("svc", d.ServiceName),
+		zap.String("application_id", logsafe.Clean(d.ApplicationID)),
+		zap.String("org_id", logsafe.Clean(d.OrgID)),
+		zap.String("status", logsafe.Clean(status)),
+	}
+	if strings.HasPrefix(status, "error:") {
+		rec.logger.Warn("network resource is not on the overlay", fields...)
+	} else {
+		rec.logger.Info("network resource status changed", fields...)
+	}
+	return true
+}
+
+// noteNetworkDesired logs the set of network services this pass wants whenever
+// it differs from the previous pass's (and on the first pass), and a count at
+// DEBUG every pass. A resource that is stored but never shows up here is the
+// case that used to be invisible.
+func (rec *ZitiReconciler) noteNetworkDesired(desired []DesiredNetworkService) {
+	names := make([]string, 0, len(desired))
+	for _, d := range desired {
+		names = append(names, d.ServiceName)
+	}
+	sort.Strings(names)
+	sig := strings.Join(names, ",")
+	rec.statusMu.Lock()
+	changed := !rec.netDesiredKnown || sig != rec.netDesiredSig
+	rec.netDesiredKnown, rec.netDesiredSig = true, sig
+	rec.statusMu.Unlock()
+	rec.logger.Debug("network services: pass", zap.Int("desired", len(names)))
+	if !changed {
+		return
+	}
+	shown := names
+	if len(shown) > 20 {
+		shown = shown[:20]
+	}
+	rec.logger.Info("network services: desired set changed",
+		zap.Int("desired", len(names)), zap.Strings("services", shown))
 }
 
 // ensureNetworkService converges one network resource's service, configs and
@@ -366,6 +433,7 @@ func (rec *ZitiReconciler) reconcileNetworkServices(ctx context.Context, zm *Zit
 		rec.revokeNetworkDials(ctx, zm, "network resources could not be loaded")
 		return
 	}
+	rec.noteNetworkDesired(desired)
 	rec.applyNetworkServices(ctx, zm, desired)
 }
 
@@ -410,7 +478,7 @@ func (rec *ZitiReconciler) applyNetworkServices(ctx context.Context, zm *ZitiMan
 			continue
 		}
 		kept = append(kept, d)
-		rec.setStatus(d.ServiceName, "synced")
+		rec.noteNetworkStatus(d, "synced")
 	}
 	// A service whose convergence failed is not left with what an earlier
 	// pass wrote. Its Dial policies go first, by name, which needs no
