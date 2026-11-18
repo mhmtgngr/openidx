@@ -23,6 +23,9 @@ func (reachableProbes) HTTPGet(context.Context, string) (doctor.HTTPResult, erro
 }
 func (reachableProbes) Proxy(string) *url.URL { return nil }
 func (reachableProbes) Now() time.Time        { return time.Now() }
+func (reachableProbes) DNSQuery(context.Context, string, string) (doctor.DNSAnswer, error) {
+	return doctor.DNSAnswer{}, context.DeadlineExceeded
+}
 
 // A "diagnose" fleet command answers with the doctor's bundle, and the
 // bundle never carries the agent's credential.

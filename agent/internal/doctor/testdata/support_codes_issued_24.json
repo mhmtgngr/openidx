@@ -1,0 +1,44 @@
+{
+  "OX1-9999-8MA": [
+    "CONFIG_UNREADABLE",
+    "NOT_ENROLLED",
+    "AUTH_INVALID",
+    "DEVICE_REVOKED",
+    "DNS_FAIL",
+    "DNS_TIMEOUT",
+    "TCP_BLOCKED",
+    "TCP_TIMEOUT",
+    "TLS_UNTRUSTED",
+    "TLS_FAIL",
+    "PROXY_AUTH_REQUIRED",
+    "SERVER_HTTP_ERROR",
+    "HTTP_TIMEOUT",
+    "HTTP_FAIL",
+    "CLOCK_SKEW",
+    "IDENTITY_MISSING",
+    "IDENTITY_EXPIRED",
+    "IDENTITY_EXPIRING",
+    "IDENTITY_INVALID",
+    "SERVICE_NOT_RUNNING",
+    "TUNNEL_DOWN",
+    "TUNNEL_NOT_INSTALLED",
+    "TUNNEL_OFF",
+    "INTERNAL"
+  ],
+  "OX1-AAAA-BWS": [],
+  "OX1-AAAB-BSS": [
+    "TUNNEL_DOWN"
+  ],
+  "OX1-ABAW-AFA": [
+    "TLS_UNTRUSTED",
+    "CLOCK_SKEW",
+    "TUNNEL_OFF"
+  ],
+  "OX1-AJAA-BYS": [
+    "NOT_ENROLLED"
+  ],
+  "OX1-GAAA-AES": [
+    "DNS_FAIL",
+    "DNS_TIMEOUT"
+  ]
+}

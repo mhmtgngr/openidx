@@ -110,6 +110,13 @@ func bundle(codes ...string) *Bundle {
 	return b
 }
 
+// warned is a bundle whose only finding is a warning with this code.
+func warned(code string) *Bundle {
+	b := bundle()
+	b.Checks = append(b.Checks, Check{ID: "names", Status: StatusWarn, Code: code})
+	return b
+}
+
 func yes() *bool { v := true; return &v }
 func no() *bool  { v := false; return &v }
 
@@ -140,6 +147,11 @@ func TestEvaluate(t *testing.T) {
 		{"network before tunnel", Evidence{Device: active(), Bundle: bundle("TUNNEL_DOWN", "TCP_TIMEOUT", "CLOCK_SKEW")},
 			[]string{CauseClockSkew, CauseNetworkBlocked, CauseTunnelDown}, false},
 		{"two codes, one cause", Evidence{Device: active(), Bundle: bundle("DNS_FAIL", "DNS_TIMEOUT")}, []string{CauseDNSFail}, false},
+		{"a VPN client answering the tunnel's DNS is a cause even as a warning", Evidence{Device: active(), Bundle: warned("DNS_INTERCEPTED")}, []string{CauseDNSIntercepted}, false},
+		{"any other warning stays informational", Evidence{Device: active(), Bundle: warned("TUNNEL_OFF"), Access: ok}, nil, true},
+		{"a real connection failure ranks before the interception", Evidence{Device: active(), Bundle: &Bundle{Schema: BundleSchema, CollectedAt: now.Add(-time.Minute),
+			Checks: []Check{{ID: "names", Status: StatusWarn, Code: "DNS_INTERCEPTED"}, {ID: "tcp", Status: StatusFail, Code: "TCP_TIMEOUT"}}}},
+			[]string{CauseNetworkBlocked, CauseDNSIntercepted}, false},
 		{"captive portal or inspection", Evidence{Device: active(), Bundle: bundle("TLS_UNTRUSTED")}, []string{CauseTLSIntercepted}, false},
 		{"tunnel state from the last report", Evidence{Device: &DeviceFacts{Status: DeviceActive, Live: true, TunnelState: "degraded"}}, []string{CauseTunnelDown}, false},
 		{"outdated agent", Evidence{Device: &DeviceFacts{Status: DeviceActive, Live: true, Outdated: true}}, []string{CauseAgentOutdated}, false},
@@ -280,6 +292,28 @@ func TestEveryCauseHasWordsInTheConsole(t *testing.T) {
 			if !entry.MatchString(block) {
 				t.Errorf("%s.ts has no title and action for %s", locale, code)
 			}
+		}
+	}
+}
+
+// Adding the 25th code made the bit array four bytes instead of three, so the
+// same set of codes is written differently now. A code someone already read to
+// IT, written by an agent that knew 24 codes, must still decode here.
+func TestSupportCodesIssuedWithTwentyFourCodesStillDecode(t *testing.T) {
+	raw, err := os.ReadFile("../../agent/internal/doctor/testdata/support_codes_issued_24.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var issued map[string][]string
+	if err := json.Unmarshal(raw, &issued); err != nil {
+		t.Fatal(err)
+	}
+	if len(issued) < 4 {
+		t.Fatalf("only %d issued support codes in the fixture", len(issued))
+	}
+	for code, want := range issued {
+		if got, err := DecodeSupportCode(code); err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s decodes to %v (%v), the agent meant %v", code, got, err, want)
 		}
 	}
 }

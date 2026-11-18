@@ -1,5 +1,5 @@
 {
-  "OX1-9999-8MA": [
+  "OX1-9999-8AL6": [
     "CONFIG_UNREADABLE",
     "NOT_ENROLLED",
     "AUTH_INVALID",
@@ -23,21 +23,22 @@
     "TUNNEL_DOWN",
     "TUNNEL_NOT_INSTALLED",
     "TUNNEL_OFF",
-    "INTERNAL"
+    "INTERNAL",
+    "DNS_INTERCEPTED"
   ],
-  "OX1-AAAA-BWS": [],
-  "OX1-AAAB-BSS": [
+  "OX1-AAAA-AAFG": [],
+  "OX1-AAAB-AAEG": [
     "TUNNEL_DOWN"
   ],
-  "OX1-ABAW-AFA": [
+  "OX1-ABAW-AABM": [
     "TLS_UNTRUSTED",
     "CLOCK_SKEW",
     "TUNNEL_OFF"
   ],
-  "OX1-AJAA-BYS": [
+  "OX1-AJAA-AAFY": [
     "NOT_ENROLLED"
   ],
-  "OX1-GAAA-AES": [
+  "OX1-GAAA-AABH": [
     "DNS_FAIL",
     "DNS_TIMEOUT"
   ]

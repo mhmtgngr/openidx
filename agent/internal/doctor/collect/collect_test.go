@@ -21,7 +21,10 @@ type okProbes struct{}
 func (okProbes) Resolve(context.Context, string) ([]string, error) {
 	return []string{"198.51.100.7"}, nil
 }
-func (okProbes) DialTCP(context.Context, string) error              { return nil }
+func (okProbes) DialTCP(context.Context, string) error { return nil }
+func (okProbes) DNSQuery(context.Context, string, string) (doctor.DNSAnswer, error) {
+	return doctor.DNSAnswer{}, context.DeadlineExceeded
+}
 func (okProbes) TLSHandshake(context.Context, string, string) error { return nil }
 func (okProbes) HTTPGet(context.Context, string) (doctor.HTTPResult, error) {
 	return doctor.HTTPResult{Status: 401, Date: time.Now()}, nil

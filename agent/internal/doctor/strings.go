@@ -53,7 +53,7 @@ var tables = map[Lang]*ui{
 			CheckConfig: "Agent setup", CheckCredentials: "Device sign-in", CheckDNS: "Name lookup",
 			CheckTCP: "Connection to server", CheckTLS: "Secure connection", CheckHTTP: "Server answer",
 			CheckClock: "Clock", CheckIdentity: "Network identity", CheckService: "Agent service",
-			CheckTunnel: "Secure tunnel",
+			CheckTunnel: "Secure tunnel", CheckNames: "Tunnel name lookup",
 		},
 		outcomes: map[string]string{
 			OutcomePlanned: "would be tried with --fix", OutcomeApplied: "done",
@@ -87,6 +87,7 @@ var tables = map[Lang]*ui{
 			CodeTunnelNotInstalled: {"The secure tunnel component is not installed on this device.", "Reinstall the OpenIDX agent, or ask IT for the full installer."},
 			CodeTunnelOff:          {"The secure tunnel is turned off for this device.", "This is normal if your organization does not use it. Otherwise ask IT to enable it."},
 			CodeInternal:           {"One of the checks could not be completed.", "Send this output to IT."},
+			CodeDNSIntercepted:     {"Other software on this device (usually a VPN client) answers DNS questions meant for the secure tunnel, so names of tunneled applications will not resolve.", "Applications reached by address still work. For names, tell IT: the VPN client blocks DNS to other servers, and the tunnel's DNS range (100.64.0.0/10) needs an exception."},
 		},
 	},
 	LangTR: {
@@ -102,7 +103,7 @@ var tables = map[Lang]*ui{
 			CheckConfig: "Ajan kurulumu", CheckCredentials: "Cihaz oturumu", CheckDNS: "Ad çözümleme",
 			CheckTCP: "Sunucuya bağlantı", CheckTLS: "Güvenli bağlantı", CheckHTTP: "Sunucu yanıtı",
 			CheckClock: "Saat", CheckIdentity: "Ağ kimliği", CheckService: "Ajan servisi",
-			CheckTunnel: "Güvenli tünel",
+			CheckTunnel: "Güvenli tünel", CheckNames: "Tünel ad çözümleme",
 		},
 		outcomes: map[string]string{
 			OutcomePlanned: "--fix ile denenir", OutcomeApplied: "yapıldı",
@@ -136,6 +137,7 @@ var tables = map[Lang]*ui{
 			CodeTunnelNotInstalled: {"Güvenli tünel bileşeni bu cihazda kurulu değil.", "OpenIDX ajanını yeniden kurun ya da BT'den tam kurulum paketini isteyin."},
 			CodeTunnelOff:          {"Güvenli tünel bu cihaz için kapalı.", "Kurumunuz tünel kullanmıyorsa bu normaldir. Kullanıyorsa BT'den açmasını isteyin."},
 			CodeInternal:           {"Kontrollerden biri tamamlanamadı.", "Bu çıktıyı BT'ye gönderin."},
+			CodeDNSIntercepted:     {"Bu cihazdaki başka bir yazılım (genellikle bir VPN istemcisi) güvenli tünele giden DNS sorularını kendisi cevaplıyor; bu yüzden tünelden açılan uygulamaların adları çözülmez.", "Adresle ulaşılan uygulamalar çalışmaya devam eder. Adlar için BT'ye söyleyin: VPN istemcisi diğer sunuculara giden DNS'i engelliyor, tünelin DNS aralığı (100.64.0.0/10) için istisna gerekiyor."},
 		},
 	},
 }

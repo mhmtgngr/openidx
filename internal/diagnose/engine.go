@@ -113,7 +113,13 @@ var bundleCauses = map[string]string{
 	"SERVICE_NOT_RUNNING":  CauseServiceNotRunning,
 	"TUNNEL_DOWN":          CauseTunnelDown,
 	"TUNNEL_NOT_INSTALLED": CauseTunnelNotInstalled,
+	"DNS_INTERCEPTED":      CauseDNSIntercepted,
 }
+
+// warningCauses are doctor codes that the device reports as warnings (the
+// connection works) but that still explain why a named application does not
+// open, so the engine counts them. Every other warning stays informational.
+var warningCauses = map[string]bool{"DNS_INTERCEPTED": true}
 
 // Evaluate is the rule engine. It never fails and never guesses: with no
 // evidence that explains a failure it says UNKNOWN, and it says Healthy only
@@ -150,7 +156,7 @@ func Evaluate(ev Evidence) Verdict {
 
 	if bundle != nil {
 		for _, c := range bundle.Checks {
-			if c.Status != StatusFail {
+			if c.Status != StatusFail && !(c.Status == StatusWarn && warningCauses[c.Code]) {
 				continue
 			}
 			if cause, ok := bundleCauses[c.Code]; ok {

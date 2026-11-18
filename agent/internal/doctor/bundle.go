@@ -40,12 +40,13 @@ const (
 	CheckIdentity    = "identity"
 	CheckService     = "service"
 	CheckTunnel      = "tunnel"
+	CheckNames       = "names"
 )
 
 // CheckOrder is every check ID in bundle order.
 var CheckOrder = []string{
 	CheckConfig, CheckCredentials, CheckDNS, CheckTCP, CheckTLS,
-	CheckHTTP, CheckClock, CheckIdentity, CheckService, CheckTunnel,
+	CheckHTTP, CheckClock, CheckIdentity, CheckService, CheckTunnel, CheckNames,
 }
 
 // Cause codes a check can report.
@@ -74,6 +75,9 @@ const (
 	CodeTunnelNotInstalled = "TUNNEL_NOT_INSTALLED"
 	CodeTunnelOff          = "TUNNEL_OFF"
 	CodeInternal           = "INTERNAL"
+	// CodeDNSIntercepted is appended after CodeInternal on purpose: AllCodes is
+	// append-only (support codes address it by position).
+	CodeDNSIntercepted = "DNS_INTERCEPTED"
 )
 
 // AllCodes lists every code; the string tables are checked against it.
@@ -84,7 +88,7 @@ var AllCodes = []string{
 	CodeHTTPTimeout, CodeHTTPFail, CodeClockSkew, CodeIdentityMissing,
 	CodeIdentityExpired, CodeIdentityExpiring, CodeIdentityInvalid,
 	CodeServiceNotRunning, CodeTunnelDown, CodeTunnelNotInstalled,
-	CodeTunnelOff, CodeInternal,
+	CodeTunnelOff, CodeInternal, CodeDNSIntercepted,
 }
 
 // Repair IDs and outcomes.
