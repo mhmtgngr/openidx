@@ -29,14 +29,20 @@ var errAmbiguousLoginIdentifier = errors.New("the sign-in identifier names more 
 //  0. the username, exactly as typed (what sign-in has always done, so a pair
 //     of usernames that differ only in case still sign in as themselves);
 //  1. the username, ignoring case;
-//  2. users.email, ignoring case (for a directory user this is whatever the
-//     attribute mapping puts there, often the UPN);
-//  3. users.mail, ignoring case (the directory's mail attribute: the address a
-//     person actually uses, kept as a second sign-in address, migration 265).
+//  2. an ADDRESS, ignoring case: users.email (for a directory user whatever the
+//     attribute mapping puts there, often the UPN) or users.mail (the
+//     directory's mail attribute, the address a person actually uses, kept as a
+//     second sign-in address, migration 265).
 //
 // The order is the safety property: an account's name always beats anyone's
-// address, so a mail value cannot take over another account's username. One
-// hit in a layer is the account; two hits in the same layer is
+// address, so an address cannot take over another account's username. The two
+// kinds of address share ONE layer, on purpose: if one account's email is
+// another account's mail (an unverified or locally provisioned email that
+// happens to be a directory person's mailbox), neither is preferred, so the
+// address signs in as neither and the refusal is audited, instead of one of
+// them silently capturing the other's address. One account is one hit (an
+// account whose email and mail are the same address is a single row). One hit
+// in a layer is the account; two hits in the same layer is
 // errAmbiguousLoginIdentifier, never a pick. An unknown identifier is
 // ErrInvalidCredentials.
 func (s *Service) resolveLoginUser(ctx context.Context, orgID, identifier string) (id, username string, err error) {
@@ -50,9 +56,8 @@ func (s *Service) resolveLoginUser(ctx context.Context, orgID, identifier string
 			UNION ALL
 			SELECT id, username, 1 FROM users WHERE org_id = $2 AND lower(username) = lower($1)
 			UNION ALL
-			SELECT id, username, 2 FROM users WHERE org_id = $2 AND lower(email) = lower($1)
-			UNION ALL
-			SELECT id, username, 3 FROM users WHERE org_id = $2 AND mail IS NOT NULL AND lower(mail) = lower($1)
+			SELECT id, username, 2 FROM users WHERE org_id = $2
+			   AND (lower(email) = lower($1) OR (mail IS NOT NULL AND lower(mail) = lower($1)))
 		) m
 		ORDER BY tier, username
 		LIMIT 2`, identifier, orgID)

@@ -115,6 +115,27 @@ func TestSignInLookupLayersAndAmbiguity(t *testing.T) {
 		setMail(t, db, ctx, "dave", "")
 	})
 
+	t.Run("an email that is another account's mail address signs in as neither", func(t *testing.T) {
+		// An unverified or locally provisioned email that happens to be a
+		// directory person's mailbox must not capture it, and the directory
+		// person must not win it either: refused, audited, never a pick.
+		setMail(t, db, ctx, "carol", "dave@corp.example") // dave's EMAIL is carol's mail
+		if _, err := s.AuthenticateUser(orgCtx, "dave@corp.example", authGoodPassword); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("a contested address signed someone in: %v", err)
+		}
+		setMail(t, db, ctx, "carol", "")
+	})
+
+	t.Run("an account whose email and mail are the same address is one account, not two", func(t *testing.T) {
+		// The OpenLDAP default maps email to mail, so both columns hold it.
+		setMail(t, db, ctx, "dave", "dave@corp.example")
+		u, err := s.AuthenticateUser(orgCtx, "Dave@Corp.Example", authGoodPassword)
+		if err != nil || u == nil || u.UserName != "dave" {
+			t.Fatalf("an account with email == mail: user=%v err=%v", u, err)
+		}
+		setMail(t, db, ctx, "dave", "")
+	})
+
 	t.Run("a mail address on two accounts signs in as neither", func(t *testing.T) {
 		setMail(t, db, ctx, "carol", "shared@mail.example")
 		setMail(t, db, ctx, "dave", "SHARED@mail.example")
