@@ -85,3 +85,11 @@ func TestUndeliveredNameResolutionIsAbsentFromTheStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "name_resolution", "a policy gap that was never asked for")
 }
+
+func TestNamesByAgentIsFalseUntilTheAgentAnswersTheNames(t *testing.T) {
+	a := newTunnelAgent(t, &tunnelServer{configBody: `{"checks":[]}`, reportBody: `{}`}, nil)
+	assert.False(t, a.NamesByAgent(), "no manager: the tunneler answers")
+	withNames(a)
+	assert.False(t, a.NamesByAgent(), "a manager that has taken nothing over is not answering")
+	assert.False(t, a.doctorInputs().NamesByAgent, "the fleet diagnose must agree with the status pipe")
+}

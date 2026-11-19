@@ -2,11 +2,13 @@ package collect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,5 +157,51 @@ func TestOnAPhoneTheServiceAndTunnelHaveNothingToSayAndNothingIsRepaired(t *test
 				t.Errorf("fix=%v: %s was %s on a phone", fix, c.ID, c.Status)
 			}
 		}
+	}
+}
+
+// Only the service knows that it answers the names of tunneled applications
+// itself, so the CLI doctor (a separate process) must take it from the status
+// pipe. Without it the CLI warned DNS_INTERCEPTED about a tunnel DNS that the
+// agent had deliberately taken over, on exactly the devices the mode is for.
+func TestNamesByAgentComesFromTheServiceStatus(t *testing.T) {
+	state := tunnel.StateConnected
+	for _, byAgent := range []bool{true, false} {
+		d := testDeps(&state)
+		d.QueryIPC = func() (*ipc.Status, error) {
+			return &ipc.Status{
+				Enrolled: true, AgentID: "agent-1", ServerURL: "https://idx.example.test",
+				Tunnel: &tunnel.Status{State: state}, NamesByAgent: byAgent,
+			}, nil
+		}
+		in := Inputs(d, "", "0.7.0")
+		if in.NamesByAgent != byAgent {
+			t.Errorf("service says names_by_agent=%v, inputs say %v", byAgent, in.NamesByAgent)
+		}
+	}
+	// A service that predates the field, or no pipe at all: not by the agent.
+	d := testDeps(&state)
+	d.QueryIPC = noPipe
+	if Inputs(d, "", "0.7.0").NamesByAgent {
+		t.Error("NamesByAgent without a status pipe")
+	}
+}
+
+func TestNamesByAgentSurvivesTheStatusPipeEncoding(t *testing.T) {
+	raw, err := json.Marshal(ipc.Status{Enrolled: true, NamesByAgent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"names_by_agent":true`) {
+		t.Fatalf("encoded status = %s", raw)
+	}
+	var back ipc.Status
+	if err := json.Unmarshal(raw, &back); err != nil || !back.NamesByAgent {
+		t.Fatalf("decoded = %+v, err = %v", back, err)
+	}
+	// An older service's status has no such field and decodes to false.
+	var old ipc.Status
+	if err := json.Unmarshal([]byte(`{"enrolled":true}`), &old); err != nil || old.NamesByAgent {
+		t.Fatalf("old status decoded = %+v, err = %v", old, err)
 	}
 }
