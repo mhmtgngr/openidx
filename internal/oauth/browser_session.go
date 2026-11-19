@@ -201,11 +201,12 @@ func (s *Service) resolveBrowserSession(ctx context.Context, token string) (sess
 		startedAt time.Time
 		revoked   bool
 		expiresAt time.Time
+		native    bool
 	)
 	qerr := s.db.Pool.QueryRow(ctx,
-		`SELECT user_id, started_at, COALESCE(revoked, false), expires_at
-		   FROM sessions WHERE id = $1 AND org_id = $2`,
-		sessionID, org.ID).Scan(&userID, &startedAt, &revoked, &expiresAt)
+		`SELECT s.user_id, s.started_at, COALESCE(s.revoked, false), s.expires_at, `+nativeClientSQL+`
+		   FROM sessions s WHERE s.id = $1 AND s.org_id = $2`,
+		sessionID, org.ID).Scan(&userID, &startedAt, &revoked, &expiresAt, &native)
 	if qerr != nil {
 		if errors.Is(qerr, pgx.ErrNoRows) {
 			s.redis.Client.Del(ctx, ssoRedisPrefix+token)
@@ -213,7 +214,10 @@ func (s *Service) resolveBrowserSession(ctx context.Context, token string) (sess
 		}
 		return nil, false, qerr
 	}
-	if revoked || !expiresAt.After(time.Now()) {
+	// A native client's session (the tray, the phone apps) is never a browser
+	// session: it lives for months, and a browser cookie that names it would
+	// let any browser client ride it.
+	if revoked || native || !expiresAt.After(time.Now()) {
 		s.redis.Client.Del(ctx, ssoRedisPrefix+token)
 		return nil, false, nil
 	}
@@ -322,6 +326,17 @@ func (s *Service) endBrowserSession(c *gin.Context) string {
 // wiring in source), then consent, then the code.
 func (s *Service) authorizeFromBrowserSession(c *gin.Context, oauthParams map[string]string, prompt authorizePrompt, maxAge time.Duration, maxAgeSet bool) bool {
 	redirectURI, state := oauthParams["redirect_uri"], oauthParams["state"]
+
+	// A native client signs in itself (the person's password and second factor
+	// every 30 to 90 days): it never rides the browser's session, whose
+	// lifetime and logout are the console's.
+	if s.nativeClient(c.Request.Context(), oauthParams["client_id"]) != nil {
+		if prompt.None {
+			s.redirectAuthorizeError(c, redirectURI, state, ErrorLoginRequired, "no authenticated session")
+			return true
+		}
+		return false
+	}
 
 	// prompt=login and select_account ask for the login form itself: an
 	// existing session must not short-circuit them and there is nothing to
@@ -503,6 +518,10 @@ func (s *Service) handleLoginResume(c *gin.Context) {
 	}
 	if prompt.Login || prompt.SelectAccount {
 		loginRequired("the client asked for an interactive login")
+		return
+	}
+	if s.nativeClient(ctx, oauthParams["client_id"]) != nil {
+		loginRequired("this client signs in itself")
 		return
 	}
 	token, cerr := c.Cookie(ssoCookieName)

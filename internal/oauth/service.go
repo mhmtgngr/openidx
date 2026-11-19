@@ -2909,7 +2909,12 @@ func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]
 	// here, which is why the cookie is set here and nowhere else.
 	if sessionID := oauthParams["session_id"]; sessionID != "" {
 		s.redis.Client.Set(c.Request.Context(), "authcode_session:"+code, sessionID, 5*time.Minute)
-		s.setBrowserSessionCookie(c, sessionID)
+		// A native client's session is its own: a browser cookie naming it
+		// would let the console ride a 90-day session, and a console logout
+		// end the tray's.
+		if s.nativeClient(c.Request.Context(), oauthParams["client_id"]) == nil {
+			s.setBrowserSessionCookie(c, sessionID)
+		}
 	}
 
 	body := authorizationCodeResponse(
@@ -3803,6 +3808,15 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 				zap.Error(err))
 		} else {
 			response.RefreshToken = refreshToken
+			// A native client's session lives as long as its refresh chain, not
+			// the 24 hours every login flow creates it with: slide it now, so
+			// a laptop closed before the first refresh is still signed in.
+			if client.NativeSession() && sessionID != "" && s.identityService != nil {
+				if err := s.identityService.UpdateSessionActivityWithin(c.Request.Context(), sessionID, client.nativeSessionWindow()); err != nil {
+					s.logger.Warn("native client session not extended at sign-in",
+						zap.String("session_id", logsafe.Clean(sessionID)), zap.Error(err))
+				}
+			}
 		}
 	}
 
@@ -3951,10 +3965,16 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 		// sessions that were in use.
 		debounceKey := "session_activity:" + token.SessionID
 		if set, _ := s.redis.Client.SetNX(c.Request.Context(), debounceKey, "1", 30*time.Second).Result(); set && s.identityService != nil {
+			// A native client's session slides by its own refresh lifetime
+			// (0 is the browser's default window).
+			var window time.Duration
+			if client.NativeSession() {
+				window = client.nativeSessionWindow()
+			}
 			go func(ctx context.Context, sessionID string) {
 				ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
-				if err := s.identityService.UpdateSessionActivity(ctx, sessionID); err != nil {
+				if err := s.identityService.UpdateSessionActivityWithin(ctx, sessionID, window); err != nil {
 					s.logger.Warn("refresh grant: session activity not recorded",
 						zap.String("session_id", logsafe.Clean(sessionID)), zap.Error(err))
 				}
@@ -4597,9 +4617,9 @@ func (s *Service) checkConcurrentSessions(ctx context.Context, userID, clientID 
 		// Terminate oldest session
 		var oldestID string
 		err := s.db.Pool.QueryRow(ctx, `
-			SELECT id FROM sessions
-			WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-			ORDER BY started_at ASC LIMIT 1
+			SELECT s.id FROM sessions s
+			WHERE s.user_id = $1 AND s.org_id = $2 AND (s.revoked IS NULL OR s.revoked = false) AND s.expires_at > NOW()
+			ORDER BY `+nativeClientSQL+` ASC, s.started_at ASC LIMIT 1
 		`, userID, org.ID).Scan(&oldestID)
 		if err == nil && oldestID != "" {
 			s.revokeSessionWithRedis(ctx, oldestID)

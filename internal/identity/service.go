@@ -1748,6 +1748,20 @@ func (s *Service) UpdateSessionActivity(ctx context.Context, sessionID string) e
 	return nil
 }
 
+// UpdateSessionActivityWithin is UpdateSessionActivity for a session that
+// follows a native client's own lifetime: expires_at slides forward by window
+// (the client's refresh-token lifetime) instead of the browser's 24 hours. A
+// window <= 0 is the default sliding window.
+func (s *Service) UpdateSessionActivityWithin(ctx context.Context, sessionID string, window time.Duration) error {
+	if err := s.sessions.UpdateActivityWithin(ctx, sessionID, window); err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return fmt.Errorf("session not found or is revoked/expired")
+		}
+		return err
+	}
+	return nil
+}
+
 // IsSessionValid checks if a session is not revoked and not expired
 func (s *Service) IsSessionValid(ctx context.Context, sessionID string) (bool, error) {
 	// Repo reads the PRIMARY here (security-critical read-after-write): a

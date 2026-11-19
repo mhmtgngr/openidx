@@ -72,9 +72,10 @@ func (s *Service) processExpiredSessions(ctx context.Context) {
 		cutoff := time.Now().Add(-time.Duration(policy.AbsoluteTimeout) * time.Second)
 		s.revokeSessionsWhere(ctx, "absolute timeout",
 			//orgscope:ignore background ticker sweeping sessions past the absolute timeout across all orgs; no request/tenant context
-			`SELECT id FROM sessions
-			WHERE (revoked IS NULL OR revoked = false)
-			AND started_at <= $1
+			`SELECT s.id FROM sessions s
+			WHERE (s.revoked IS NULL OR s.revoked = false)
+			AND s.started_at <= $1
+			AND NOT `+nativeClientSQL+`
 			LIMIT 500
 		`, cutoff)
 	}
@@ -84,10 +85,11 @@ func (s *Service) processExpiredSessions(ctx context.Context) {
 		idleCutoff := time.Now().Add(-time.Duration(policy.IdleTimeout) * time.Second)
 		idleRows, err := s.db.Pool.Query(ctx,
 			//orgscope:ignore background ticker sweeping idle sessions across all orgs; no request/tenant context
-			`SELECT id FROM sessions
-			WHERE (revoked IS NULL OR revoked = false)
-			AND expires_at > NOW()
-			AND last_seen_at < $1
+			`SELECT s.id FROM sessions s
+			WHERE (s.revoked IS NULL OR s.revoked = false)
+			AND s.expires_at > NOW()
+			AND s.last_seen_at < $1
+			AND NOT `+nativeClientSQL+`
 			LIMIT 500
 		`, idleCutoff)
 		if err != nil {
@@ -112,6 +114,39 @@ func (s *Service) processExpiredSessions(ctx context.Context) {
 			}
 		}
 	}
+
+	// Phase 2b: sessions of native, device-bound clients (the tray, the phone
+	// apps) follow their client's own lifetime, not the browser policy above,
+	// and are ended here, whatever the Security tab's timeouts say (0 turns the
+	// browser sweeps off, not this one):
+	//   - the family cap since sign-in (refresh_token_max_lifetime, 90 days),
+	//   - one refresh token's unused lifetime (refresh_token_lifetime, 30 days
+	//     desktop / 14 phone) since the session was last seen,
+	//   - no live refresh token left to keep it going. Sign-out revokes only the
+	//     token, a revoked device or an exhausted family revokes the chain, and
+	//     none of those ended the row. The first 15 minutes are the sign-in's
+	//     own gap (code exchange), a token rotated in the last 10 minutes is the
+	//     rotation gap.
+	s.revokeSessionsWhere(ctx, "native client lifetime",
+		//orgscope:ignore background ticker sweeping native-client sessions across all orgs; no request/tenant context
+		`SELECT s.id FROM sessions s
+		JOIN oauth_clients c ON c.client_id = s.client_id AND c.org_id = s.org_id
+		WHERE COALESCE(s.revoked, false) = false
+		AND c.allow_refresh_token AND c.refresh_token_lifetime > 0 AND c.refresh_token_max_lifetime > 0
+		AND (
+			s.started_at <= NOW() - make_interval(secs => c.refresh_token_max_lifetime)
+			OR s.last_seen_at < NOW() - make_interval(secs => c.refresh_token_lifetime)
+			OR (
+				s.started_at < NOW() - interval '15 minutes'
+				AND NOT EXISTS (
+					SELECT 1 FROM oauth_refresh_tokens rt
+					WHERE rt.session_id = s.id AND rt.revoked_at IS NULL AND rt.expires_at > NOW()
+					AND (rt.used_at IS NULL OR rt.used_at > NOW() - interval '10 minutes')
+				)
+			)
+		)
+		LIMIT 500
+	`)
 
 	// Phase 3: Clean up expired SAML sessions so the saml_sessions bookkeeping
 	// table stays bounded once SLO sessions age out.

@@ -6731,6 +6731,7 @@ const tr: typeof en = {
         absoluteHint: '0 = kapalı. Varsayılan: 86400 (24 sa)',
         rememberMe: 'Beni Hatırla Süresi (saniye)',
         rememberMeHint: 'Varsayılan: 2592000 (30 gün)',
+        nativeHint: 'Bu süreler tarayıcı oturumları içindir. Masaüstü ve mobil uygulamalar bunun yerine kendi istemci ömrünü izler: oturum kullanılmadan 30 gün (telefonda 14 gün) sonra ya da girişten 90 gün sonra biter.',
         maxConcurrent: 'Azami Eşzamanlı Oturum',
         maxConcurrentHint: '0 = sınırsız',
         strategy: 'Eşzamanlı Oturum Stratejisi',

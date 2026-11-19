@@ -579,6 +579,7 @@ export function SettingsPage() {
                       <p className="text-xs text-muted-foreground">{t('pages.settings.sessionPolicies.rememberMeHint')}</p>
                     </div>
                   </div>
+                  <p className="text-xs text-muted-foreground">{t('pages.settings.sessionPolicies.nativeHint')}</p>
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <label htmlFor="settings-max-concurrent" className="text-sm font-medium">{t('pages.settings.sessionPolicies.maxConcurrent')}</label>

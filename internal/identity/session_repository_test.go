@@ -64,6 +64,10 @@ func (f *fakeSessionRepository) UpdateActivity(_ context.Context, sessionID stri
 	return nil
 }
 
+func (f *fakeSessionRepository) UpdateActivityWithin(ctx context.Context, sessionID string, _ time.Duration) error {
+	return f.UpdateActivity(ctx, sessionID)
+}
+
 func (f *fakeSessionRepository) Terminate(_ context.Context, sessionID string) error {
 	delete(f.byID, sessionID)
 	return nil
