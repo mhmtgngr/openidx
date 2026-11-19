@@ -9,7 +9,15 @@ type strs struct {
 	AppName, Quit, QuitTip string
 
 	NotSignedIn, SignedIn, SignIn, SignInTip, SignOut, SignOutTip string
-	SessionExpired, SignInFailed                                  string
+	SignInFailed                                                  string
+
+	// The status line says two independent things: what the DEVICE is (the
+	// network and its access work with no person signed in) and whether a PERSON
+	// is signed in (which only My Connections, device claiming and a fresh second
+	// factor need). SignedOutNote is the second said as information, not as a
+	// fault.
+	DevEnrolled, DevRevoked, DevNotAccepted, DevUnknown, SignedOutNote string
+	ConnSignIn, ConnSignInTip                                          string
 
 	ClaimSignIn, ClaimNow, ClaimTip string
 
@@ -41,7 +49,12 @@ var enStrings = strs{
 	NotSignedIn: "Not signed in", SignedIn: "Signed in",
 	SignIn: "Sign in", SignInTip: "Sign in to OpenIDX",
 	SignOut: "Sign out", SignOutTip: "Sign out",
-	SessionExpired: "Session expired · sign in again", SignInFailed: "Sign-in failed",
+	SignInFailed: "Sign-in failed",
+
+	DevEnrolled: "device: enrolled", DevRevoked: "device: REVOKED by an administrator",
+	DevNotAccepted: "device: NOT ACCEPTED · enroll it again", DevUnknown: "device: unknown",
+	SignedOutNote: "not signed in (only My Connections needs it)",
+	ConnSignIn:    "Sign in to see My Connections…", ConnSignInTip: "Sign in once; your connections are then listed",
 
 	ClaimSignIn: "Sign in to claim this device", ClaimNow: "Claim this device",
 	ClaimTip: "Nobody owns this device yet; sign in to make it yours",
@@ -93,7 +106,12 @@ var trStrings = strs{
 	NotSignedIn: "Oturum açılmadı", SignedIn: "Oturum açık",
 	SignIn: "Oturum aç", SignInTip: "OpenIDX'te oturum aç",
 	SignOut: "Oturumu kapat", SignOutTip: "Oturumu kapat",
-	SessionExpired: "Oturum süresi doldu · yeniden oturum açın", SignInFailed: "Oturum açılamadı",
+	SignInFailed: "Oturum açılamadı",
+
+	DevEnrolled: "cihaz: kayıtlı", DevRevoked: "cihaz: yönetici tarafından İPTAL EDİLDİ",
+	DevNotAccepted: "cihaz: KABUL EDİLMİYOR · yeniden kaydedin", DevUnknown: "cihaz: bilinmiyor",
+	SignedOutNote: "oturum açık değil (yalnızca Bağlantılarım için gerekir)",
+	ConnSignIn:    "Bağlantılarımı görmek için oturum aç…", ConnSignInTip: "Bir kez oturum açın; bağlantılarınız listelenir",
 
 	ClaimSignIn: "Bu cihazı sahiplenmek için oturum açın", ClaimNow: "Bu cihazı sahiplen",
 	ClaimTip: "Bu cihazın henüz sahibi yok; sizin olması için oturum açın",

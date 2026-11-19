@@ -46,7 +46,7 @@ func updateMessage(current string, manifestURL string, m *updater.Manifest, err 
 
 // aboutText is the About box: build, update channel and the last update
 // check's outcome, server and device (B8.11).
-func aboutText(version, server, agentID, deviceID, configDir string, st *ipc.Status) string {
+func aboutText(version, server, agentID, deviceID, configDir string, st *ipc.Status, signedIn bool) string {
 	if server == "" {
 		server = "(not enrolled)"
 	}
@@ -74,6 +74,11 @@ func aboutText(version, server, agentID, deviceID, configDir string, st *ipc.Sta
 	}
 	if deviceID != "" {
 		msg += "\nDevice ID: " + deviceID
+	}
+	if signedIn {
+		msg += "\nSigned in: yes"
+	} else {
+		msg += "\nSigned in: no (the network works without it; My Connections needs it)"
 	}
 	if st != nil && st.Unclaimed {
 		msg += "\nOwner: nobody yet. Sign in to claim this device."

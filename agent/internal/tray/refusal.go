@@ -12,6 +12,10 @@ type refusalAction int
 const (
 	// actionTell: show the server's reason; nothing to offer.
 	actionTell refusalAction = iota
+	// actionSignIn: the server does not know the person (the session ended or
+	// the access token was refused). Sign in, quietly, and connect again once;
+	// nobody had to be told that a session exists.
+	actionSignIn
 	// actionSignInFresh: the session's second factor is stale; offer a fresh
 	// sign-in, after which the connection is one click away.
 	actionSignInFresh
@@ -27,6 +31,8 @@ const (
 // pure so the mapping is tested without a tray.
 func refusalActionFor(err error) refusalAction {
 	switch {
+	case errors.Is(err, desktoppam.ErrNotSignedIn):
+		return actionSignIn
 	case errors.Is(err, desktoppam.ErrStepUpRequired):
 		return actionSignInFresh
 	case errors.Is(err, desktoppam.ErrJustificationRequired):

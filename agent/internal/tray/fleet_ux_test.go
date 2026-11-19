@@ -42,17 +42,17 @@ func TestJustificationRefusalOpensJustifyLink(t *testing.T) {
 
 func TestAboutShowsVersionChannelAndUpdateState(t *testing.T) {
 	st := &ipc.Status{Enrolled: true, UpdateChannel: "beta", UpdateState: "failed", UpdateVersion: "0.6.5", Unclaimed: true}
-	msg := aboutText("0.6.4", "https://idp.example", "agent-1", "dev-1", `C:\ProgramData\OpenIDX\agent`, st)
+	msg := aboutText("0.6.4", "https://idp.example", "agent-1", "dev-1", `C:\ProgramData\OpenIDX\agent`, st, false)
 	for _, want := range []string{"OpenIDX agent 0.6.4", "Update channel: beta", "Last update: failed (0.6.5)", "Agent ID: agent-1", "Sign in to claim"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("About lacks %q:\n%s", want, msg)
 		}
 	}
-	paused := aboutText("0.6.4", "", "", "", "/x", &ipc.Status{UpdatePaused: true})
+	paused := aboutText("0.6.4", "", "", "", "/x", &ipc.Status{UpdatePaused: true}, false)
 	if !strings.Contains(paused, "Update channel: stable (updates paused") || !strings.Contains(paused, "(not enrolled)") {
 		t.Errorf("paused About:\n%s", paused)
 	}
-	if strings.Contains(aboutText("0.6.4", "s", "", "", "/x", nil), "Update channel") {
+	if strings.Contains(aboutText("0.6.4", "s", "", "", "/x", nil, false), "Update channel") {
 		t.Error("About claimed a channel with no service answer")
 	}
 }
@@ -68,5 +68,16 @@ func TestClaimPromptOnlyForUnclaimedDevice(t *testing.T) {
 		if got := claimPrompt(false, st); got != "" {
 			t.Errorf("%+v offered %q", st, got)
 		}
+	}
+}
+
+func TestAboutSaysWhetherAPersonIsSignedInWithoutCallingItAFault(t *testing.T) {
+	in := aboutText("0.7.0", "https://idp.example", "agent-1", "dev-1", "/x", &ipc.Status{Enrolled: true}, true)
+	out := aboutText("0.7.0", "https://idp.example", "agent-1", "dev-1", "/x", &ipc.Status{Enrolled: true}, false)
+	if !strings.Contains(in, "Signed in: yes") {
+		t.Errorf("signed in: %q", in)
+	}
+	if !strings.Contains(out, "Signed in: no") || !strings.Contains(out, "network works without it") {
+		t.Errorf("signed out must say the network works without it: %q", out)
 	}
 }

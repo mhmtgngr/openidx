@@ -11,26 +11,29 @@ import "github.com/openidx/openidx/agent/internal/ipc"
 // install, before any enrolment, and "device: unknown" told the person
 // nothing.
 func composeStatus(signedIn, serverKnown bool, st *ipc.Status) string {
-	signPart := T.NotSignedIn
+	// The device comes first and the person last: a device with nobody signed in
+	// is working as designed (the tunnel carries its traffic under the device's
+	// own identity), so "not signed in" is information, not the headline.
+	person := T.SignedOutNote
 	if signedIn {
-		signPart = T.SignedIn
+		person = T.SignedIn
 	}
 	switch {
 	case st != nil && st.Revoked:
-		return signPart + " · device: REVOKED by an administrator"
+		return T.DevRevoked + " · " + person
 	case needsReEnrollment(st):
-		return signPart + " · device: NOT ACCEPTED · enroll it again"
+		return T.DevNotAccepted + " · " + person
 	case st != nil && st.Enrolled:
-		dev := "device: enrolled"
+		dev := T.DevEnrolled
 		if st.ZitiEnrolled {
 			dev += " · ziti"
 		}
 		if note := postureNote(st); note != "" {
 			dev += " · " + note
 		}
-		return signPart + " · " + dev
+		return dev + " · " + person
 	case st != nil && !st.Enrolled, !serverKnown:
 		return T.NotEnrolledStatus
 	}
-	return signPart + " · device: unknown"
+	return T.DevUnknown + " · " + person
 }

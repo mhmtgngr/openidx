@@ -143,7 +143,12 @@ func (e *Engine) Status() (string, error) {
 		st.LoggedIn = true
 		st.TokenExpiry = tok.ExpiresAt
 		if tok.ExpiresAt > 0 {
-			st.TokenExpired = time.Now().Unix() >= tok.ExpiresAt
+			// An access token past its expiry is not an ended session while
+			// a refresh token can renew it: AccessToken() refreshes on demand,
+			// so the app asks for nothing until it needs a token. Reporting
+			// "expired" here showed a red "Session expired" after any hour of
+			// not using the app.
+			st.TokenExpired = time.Now().Unix() >= tok.ExpiresAt && tok.RefreshToken == ""
 		}
 		if sub, email, exp, ok := decodeJWTClaims(tok.AccessToken); ok {
 			st.UserSub = sub
