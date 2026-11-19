@@ -2268,6 +2268,18 @@ func challengeRefusal(g *botgate.Gate, reason botgate.Reason) gin.H {
 	return body
 }
 
+// loginIdentifierKind says what shape of identifier was typed at the login
+// page, for the failed-login audit record: "email" when it contains an @,
+// "username" otherwise. The identifier itself is already the record's actor;
+// the kind lets support tell "typed an address that is nobody's" from "typed a
+// name that is nobody's" at a glance.
+func loginIdentifierKind(typed string) string {
+	if strings.Contains(typed, "@") {
+		return "email"
+	}
+	return "username"
+}
+
 func (s *Service) handleLogin(c *gin.Context) {
 	var req struct {
 		Username     string `json:"username"`
@@ -2354,7 +2366,8 @@ func (s *Service) handleLogin(c *gin.Context) {
 			defer cancel()
 			s.logAuditEvent(ctx, "authentication", "security", "login_failed", "failure",
 				req.Username, clientIP, "", "user",
-				map[string]interface{}{"reason": err.Error(), "user_agent": userAgent})
+				map[string]interface{}{"reason": err.Error(), "user_agent": userAgent,
+					"identifier_kind": loginIdentifierKind(req.Username)})
 		}()
 
 		// login.failed has been a declared webhook event type with no publisher:

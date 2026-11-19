@@ -1875,5 +1875,12 @@ func allMigrations() []*Migration {
 			UpSQL:       nameResolutionUp,
 			DownSQL:     nameResolutionDown,
 		},
+		{
+			Version:     265,
+			Name:        "user_mail_sign_in",
+			Description: "A second sign-in address for directory users. users.mail holds the directory's mail attribute (not unique, and not the account's email: password reset and notifications keep using users.email), because an Active Directory mapping fills users.email from userPrincipalName and the address a person actually types was kept nowhere. lower() indexes on (org_id, username), (org_id, email) and (org_id, mail) serve the case-insensitive sign-in lookup. Nothing is backfilled; the next directory sync fills the column.",
+			UpSQL:       userMailUp,
+			DownSQL:     userMailDown,
+		},
 	}
 }

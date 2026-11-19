@@ -53,6 +53,7 @@ CREATE TABLE users (
     locked_until         TIMESTAMPTZ,
     source               VARCHAR(50),
     directory_id         UUID,
+    mail                 VARCHAR(255),
     org_id               UUID NOT NULL
 ,
     user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ

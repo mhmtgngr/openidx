@@ -71,7 +71,9 @@ func (s *Service) handlePasswordlessPhoneInit(c *gin.Context) {
 		})
 	}
 
-	user, err := s.identityService.GetUserByUsername(c.Request.Context(), req.Username)
+	// The person types what they know at the login page: the account name, the
+	// address they use, in any case. Same lookup as the password sign-in.
+	user, err := s.identityService.FindUserByLoginIdentifier(c.Request.Context(), req.Username)
 	if err != nil || user == nil {
 		s.logger.Info("passwordless phone init: user not found",
 			zap.String("username", req.Username))

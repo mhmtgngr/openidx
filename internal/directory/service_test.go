@@ -478,6 +478,7 @@ func TestMapUserEntry(t *testing.T) {
 				DN:          "CN=John Doe,CN=Users,DC=example,DC=com",
 				Username:    "jdoe",
 				Email:       "john.doe@example.com",
+				Mail:        "john.doe@example.com",
 				FirstName:   "John",
 				LastName:    "Doe",
 				DisplayName: "John Doe",
@@ -506,6 +507,7 @@ func TestMapUserEntry(t *testing.T) {
 				DN:          "uid=jsmith,ou=users,dc=example,dc=com",
 				Username:    "jsmith",
 				Email:       "jsmith@example.com",
+				Mail:        "jsmith@example.com",
 				FirstName:   "Jane",
 				LastName:    "Smith",
 				DisplayName: "Jane Smith",
@@ -1364,6 +1366,7 @@ func TestFillDefaults(t *testing.T) {
 				FirstName:   "givenName",
 				LastName:    "sn",
 				DisplayName: "cn",
+				Mail:        "mail",
 			},
 		},
 		{
@@ -1377,6 +1380,7 @@ func TestFillDefaults(t *testing.T) {
 				FirstName:   "givenName",
 				LastName:    "sn",
 				DisplayName: "cn",
+				Mail:        "mail",
 			},
 		},
 		{
@@ -1394,6 +1398,7 @@ func TestFillDefaults(t *testing.T) {
 				FirstName:   "customGivenName",
 				LastName:    "customSn",
 				DisplayName: "customCn",
+				Mail:        "mail",
 			},
 		},
 	}

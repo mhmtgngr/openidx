@@ -93,14 +93,23 @@ type AttributeMapping struct {
 	LastName    string `json:"last_name"`
 	DisplayName string `json:"display_name"`
 	GroupName   string `json:"group_name"`
+	// Mail is the attribute that holds the person's real mail address
+	// (default "mail"). It is kept as a SECOND sign-in address (users.mail),
+	// separate from Email: an Active Directory mapping often fills Email from
+	// userPrincipalName, and the address people actually type at the login page
+	// is the mail attribute.
+	Mail string `json:"mail,omitempty"`
 }
 
 // UserRecord represents a user extracted from a directory
 type UserRecord struct {
-	DN          string
-	ExternalID  string // Azure AD objectId or other external identifier
-	Username    string
-	Email       string
+	DN         string
+	ExternalID string // Azure AD objectId or other external identifier
+	Username   string
+	Email      string
+	// Mail is the directory's mail attribute, a second sign-in address
+	// (users.mail); empty when the entry has none.
+	Mail        string
 	FirstName   string
 	LastName    string
 	DisplayName string

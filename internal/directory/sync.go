@@ -456,10 +456,33 @@ type dbUser struct {
 	ID        string
 	Username  string
 	Email     string
+	Mail      string
 	FirstName string
 	LastName  string
 	LdapDN    string
 	Enabled   bool
+}
+
+// updateLDAPUser writes a directory entry's attributes onto the account it
+// already has. mail is the second sign-in address (migration 265): an entry
+// with no mail attribute clears it rather than keeping a stale one.
+func (e *SyncEngine) updateLDAPUser(ctx context.Context, userID, orgID string, record UserRecord) error {
+	_, err := e.db.Pool.Exec(ctx,
+		`UPDATE users SET username = $2, email = $3, first_name = $4, last_name = $5,
+		        mail = NULLIF($7, ''), updated_at = NOW()
+		 WHERE id = $1 AND org_id = $6`,
+		userID, record.Username, record.Email, record.FirstName, record.LastName, orgID, record.Mail)
+	return err
+}
+
+// insertLDAPUser creates the account of a new directory entry.
+func (e *SyncEngine) insertLDAPUser(ctx context.Context, directoryID, orgID, passwordHash string, record UserRecord) error {
+	_, err := e.db.Pool.Exec(ctx,
+		`INSERT INTO users (username, email, mail, first_name, last_name, password_hash, enabled, email_verified, source, directory_id, ldap_dn, org_id)
+		 VALUES ($1, $2, NULLIF($9, ''), $3, $4, $5, true, true, 'ldap', $6, $7, $8)
+		 ON CONFLICT (username) DO NOTHING`,
+		record.Username, record.Email, record.FirstName, record.LastName, passwordHash, directoryID, record.DN, orgID, record.Mail)
+	return err
 }
 
 func (e *SyncEngine) syncUsers(ctx context.Context, connector *LDAPConnector, directoryID, orgID string, cfg LDAPConfig, fullSync bool, result *SyncResult) error {
@@ -502,7 +525,7 @@ func (e *SyncEngine) syncUsers(ctx context.Context, connector *LDAPConnector, di
 	// Build map of existing DB users for this directory
 	dbUsers := make(map[string]dbUser)
 	rows, err := e.db.Pool.Query(ctx,
-		`SELECT id, username, email, first_name, last_name, ldap_dn, enabled
+		`SELECT id, username, email, COALESCE(mail, ''), first_name, last_name, ldap_dn, enabled
 		 FROM users WHERE directory_id = $1 AND org_id = $2`, directoryID, orgID)
 	if err != nil {
 		return fmt.Errorf("failed to query existing users: %w", err)
@@ -512,7 +535,7 @@ func (e *SyncEngine) syncUsers(ctx context.Context, connector *LDAPConnector, di
 	for rows.Next() {
 		var u dbUser
 		var dn *string
-		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName, &dn, &u.Enabled); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Mail, &u.FirstName, &u.LastName, &dn, &u.Enabled); err != nil {
 			continue
 		}
 		if dn != nil {
@@ -531,13 +554,9 @@ func (e *SyncEngine) syncUsers(ctx context.Context, connector *LDAPConnector, di
 
 		existing, found := dbUsers[record.DN]
 		if found {
-			if existing.Username != record.Username || existing.Email != record.Email ||
+			if existing.Username != record.Username || existing.Email != record.Email || existing.Mail != record.Mail ||
 				existing.FirstName != record.FirstName || existing.LastName != record.LastName {
-				_, err := e.db.Pool.Exec(ctx,
-					`UPDATE users SET username = $2, email = $3, first_name = $4, last_name = $5, updated_at = NOW()
-					 WHERE id = $1 AND org_id = $6`,
-					existing.ID, record.Username, record.Email, record.FirstName, record.LastName, orgID)
-				if err != nil {
+				if err := e.updateLDAPUser(ctx, existing.ID, orgID, record); err != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("failed to update user %s: %v", record.Username, err))
 				} else {
 					result.UsersUpdated++
@@ -548,12 +567,7 @@ func (e *SyncEngine) syncUsers(ctx context.Context, connector *LDAPConnector, di
 			randomPwd := fmt.Sprintf("ldap-nologin-%d", time.Now().UnixNano())
 			hash, _ := bcrypt.GenerateFromPassword([]byte(randomPwd), bcrypt.DefaultCost)
 
-			_, err := e.db.Pool.Exec(ctx,
-				`INSERT INTO users (username, email, first_name, last_name, password_hash, enabled, email_verified, source, directory_id, ldap_dn, org_id)
-				 VALUES ($1, $2, $3, $4, $5, true, true, 'ldap', $6, $7, $8)
-				 ON CONFLICT (username) DO NOTHING`,
-				record.Username, record.Email, record.FirstName, record.LastName, string(hash), directoryID, record.DN, orgID)
-			if err != nil {
+			if err := e.insertLDAPUser(ctx, directoryID, orgID, string(hash), record); err != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("failed to create user %s: %v", record.Username, err))
 			} else {
 				result.UsersAdded++
