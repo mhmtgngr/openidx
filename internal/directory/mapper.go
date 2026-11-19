@@ -1,6 +1,8 @@
 package directory
 
 import (
+	"strings"
+
 	"github.com/go-ldap/ldap/v3"
 )
 
@@ -36,6 +38,7 @@ func MapUserEntry(entry *ldap.Entry, mapping AttributeMapping) UserRecord {
 		DN:          entry.DN,
 		Username:    entry.GetAttributeValue(m.Username),
 		Email:       entry.GetAttributeValue(m.Email),
+		Mail:        strings.TrimSpace(entry.GetAttributeValue(m.Mail)),
 		FirstName:   entry.GetAttributeValue(m.FirstName),
 		LastName:    entry.GetAttributeValue(m.LastName),
 		DisplayName: entry.GetAttributeValue(m.DisplayName),
@@ -67,6 +70,9 @@ func fillDefaults(m AttributeMapping) AttributeMapping {
 	}
 	if m.Email == "" {
 		m.Email = "mail"
+	}
+	if m.Mail == "" {
+		m.Mail = "mail"
 	}
 	if m.FirstName == "" {
 		m.FirstName = "givenName"

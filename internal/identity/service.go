@@ -2216,7 +2216,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		return nil, err
 	}
 
-	var userID, passwordHash string
+	var userID, passwordHash, storedUsername string
 	var enabled bool
 	var lockedUntil *time.Time
 	var source *string
@@ -2229,17 +2229,34 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	// that let parallel guesses share a single increment. The count now only
 	// ever changes inside the UPDATE that reads it.
 	//
-	// Get user by username or email, within the caller's org
+	// Find the account the typed identifier names (username, email or the
+	// directory's mail address; case-insensitive, trimmed; see
+	// resolveLoginUser), then read it by id.
+	resolvedID, _, rerr := s.resolveLoginUser(ctx, org.ID, username)
+	if rerr != nil {
+		if errors.Is(rerr, errAmbiguousLoginIdentifier) {
+			s.logAuditEvent(ctx, "identity", "authentication", "user.login_denied", "failure",
+				"", "", "user", map[string]interface{}{
+					"username": logsafe.Clean(username),
+					"reason":   "ambiguous_identifier",
+				})
+			return nil, ErrInvalidCredentials
+		}
+		if errors.Is(rerr, ErrInvalidCredentials) {
+			s.logger.Debug("User not found", zap.String("username", logsafe.Clean(username)))
+			return nil, ErrInvalidCredentials
+		}
+		return nil, rerr
+	}
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, password_hash, enabled, locked_until, source, directory_id,
+		SELECT id, username, password_hash, enabled, locked_until, source, directory_id,
 		       user_type, account_status, account_expires_at
 		FROM users
-		WHERE (username = $1 OR email = $1) AND org_id = $2
-	`, username, org.ID).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &source, &directoryID,
+		WHERE id = $1 AND org_id = $2
+	`, resolvedID, org.ID).Scan(&userID, &storedUsername, &passwordHash, &enabled, &lockedUntil, &source, &directoryID,
 		&userType, &accountStatus, &accountExpiresAt)
-
 	if err != nil {
-		s.logger.Debug("User not found", zap.String("username", username))
+		s.logger.Debug("User not found", zap.String("username", logsafe.Clean(username)))
 		return nil, ErrInvalidCredentials
 	}
 
@@ -2297,7 +2314,10 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	if source != nil && (*source == "ldap" || *source == "active_directory") && directoryID != nil && s.directoryService != nil {
 		s.logger.Debug("Authenticating directory user", zap.String("username", username), zap.String("source", *source), zap.String("directory_id", *directoryID))
 
-		if err := s.directoryService.AuthenticateUser(ctx, *directoryID, username, password); err != nil {
+		// The directory knows the account by its own name, which is what the
+		// sync stored as users.username (sAMAccountName / uid), not by whatever
+		// address the person typed to find it.
+		if err := s.directoryService.AuthenticateUser(ctx, *directoryID, storedUsername, password); err != nil {
 			s.onFailedLogin(ctx, userID, username, "directory_rejected")
 			s.logger.Debug("Directory authentication failed", zap.String("username", username), zap.Error(err))
 			return nil, ErrInvalidCredentials

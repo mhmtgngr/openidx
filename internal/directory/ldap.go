@@ -470,7 +470,19 @@ func (c *LDAPConnector) userAttributes() []string {
 		attrs = append(attrs, "cn")
 	}
 
-	return attrs
+	// The mail attribute is read whatever the email mapping says (an AD mapping
+	// that fills email from userPrincipalName would otherwise never fetch it):
+	// it is the second sign-in address, users.mail.
+	mailAttr := m.Mail
+	if mailAttr == "" {
+		mailAttr = "mail"
+	}
+	for _, a := range attrs {
+		if strings.EqualFold(a, mailAttr) {
+			return attrs
+		}
+	}
+	return append(attrs, mailAttr)
 }
 
 // defaultReferralHopLimit bounds referral chasing when the config leaves it 0.
