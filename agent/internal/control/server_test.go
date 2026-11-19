@@ -221,6 +221,41 @@ func TestStatusReflectsLoggedInUser(t *testing.T) {
 	}
 }
 
+// An access token past its expiry is not a finished session while a refresh
+// token can renew it: the engine refreshes on demand (AccessToken), so the app
+// has nothing to ask the person for. Reporting it as expired put a red "session
+// expired" on the phone after any hour of not using the app.
+func TestAnExpiredAccessTokenWithARefreshTokenIsNotAnExpiredSession(t *testing.T) {
+	past := time.Now().Add(-time.Hour).Unix()
+	for _, tc := range []struct {
+		name    string
+		refresh string
+		want    bool
+	}{
+		{"refreshable", "refresh-token", false},
+		{"nothing to refresh with", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEngine(t, &fakeBackend{})
+			tok := &sso.Tokens{AccessToken: makeJWT("user-42", "u@example.com", past), ExpiresAt: past, RefreshToken: tc.refresh}
+			if err := saveToken(e.configDir, tok); err != nil {
+				t.Fatal(err)
+			}
+			c, base, done := startTestServer(t, e)
+			defer done()
+			code, body := get(t, c, base, "/status")
+			if code != http.StatusOK {
+				t.Fatalf("code=%d body=%s", code, body)
+			}
+			var st statusPayload
+			_ = json.Unmarshal(body, &st)
+			if !st.LoggedIn || st.TokenExpired != tc.want {
+				t.Fatalf("logged_in=%v token_expired=%v, want token_expired=%v", st.LoggedIn, st.TokenExpired, tc.want)
+			}
+		})
+	}
+}
+
 func TestLogoutRoute(t *testing.T) {
 	e := newTestEngine(t, &fakeBackend{})
 	c, base, done := startTestServer(t, e)

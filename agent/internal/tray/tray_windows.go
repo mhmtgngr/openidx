@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/getlantern/systray"
@@ -40,7 +41,10 @@ type app struct {
 	mSignIn   *systray.MenuItem
 	mSignOut  *systray.MenuItem
 	mConnRoot *systray.MenuItem
-	mHello    *systray.MenuItem
+	// mConnSignIn stands in the connections submenu while there is no session
+	// and no cached list, so the menu never reads as an empty entitlement.
+	mConnSignIn *systray.MenuItem
+	mHello      *systray.MenuItem
 	// mReEnroll opens Add a device when the server refuses this device's
 	// credential; hidden otherwise.
 	mReEnroll *systray.MenuItem
@@ -49,8 +53,13 @@ type app struct {
 	mAutostart *systray.MenuItem
 	mHealth    *systray.MenuItem
 	mNetwork   *systray.MenuItem
-	// mApps opens the end-user app portal; shown only while signed in.
+	// mApps opens the end-user app portal in the browser, which signs the person
+	// in by itself; it needs no tray session and is always shown.
 	mApps *systray.MenuItem
+
+	// signingIn is set while a sign-in the tray started is in progress, so a
+	// second click (or a second connection) does not open a second browser.
+	signingIn atomic.Bool
 
 	mu       sync.Mutex
 	tokens   *sso.Tokens
@@ -127,10 +136,15 @@ func (a *app) onReady() {
 	a.mSignOut = systray.AddMenuItem(T.SignOut, T.SignOutTip)
 	a.mSignOut.Hide()
 	a.mApps = systray.AddMenuItem(T.OpenApps, T.OpenAppsTip)
-	a.mApps.Hide()
 	a.mHello = systray.AddMenuItem(T.Hello, T.HelloTip)
 	systray.AddSeparator()
 	a.mConnRoot = systray.AddMenuItem(T.Connections, T.ConnectionsTip)
+	a.mConnSignIn = a.mConnRoot.AddSubMenuItem(T.ConnSignIn, T.ConnSignInTip)
+	go func() {
+		for range a.mConnSignIn.ClickedCh {
+			go a.signInThen(nil)
+		}
+	}()
 	for i := 0; i < maxConnSlots; i++ {
 		mi := a.mConnRoot.AddSubMenuItem("", "")
 		mi.Hide()
@@ -174,6 +188,7 @@ func (a *app) onReady() {
 		a.setSignedIn(t)
 		go a.keepFresh()
 	}
+	a.syncConnPrompt()
 	a.updateStatus()
 
 	go a.loop(mQuit)
@@ -439,7 +454,7 @@ func (a *app) about() {
 		agentID, deviceID = cfg.AgentID, cfg.DeviceID
 	}
 	st, _ := ipc.Query()
-	a.tell(aboutText(Version, a.server(), agentID, deviceID, a.configDir, st))
+	a.tell(aboutText(Version, a.server(), agentID, deviceID, a.configDir, st, a.signedIn()))
 }
 
 func (a *app) statusTicker() {
@@ -486,29 +501,67 @@ func (a *app) keepFresh() {
 
 // sessionExpired drops a session the server will no longer honour. There is
 // nothing to revoke: the refresh token was already refused, or there was
-// none. The menu says so, instead of "Signed in" over a dead token.
+// none.
+//
+// It is quiet on purpose. The session is the person's, and only My
+// Connections, claiming the device and a fresh second factor need it: the
+// device's network works without it, so an expired session is not a fault and
+// the tray must not read like one (it used to empty the menu and say "Session
+// expired", which people read as "I lost access"). The cached connection names
+// stay in the menu; a click signs in and then connects.
 func (a *app) sessionExpired() {
 	_ = authstore.Clear(a.configDir)
 	a.mu.Lock()
 	a.tokens = nil
-	for i := range a.slotID {
-		a.slotID[i] = ""
-	}
 	a.mu.Unlock()
-	for _, mi := range a.connSlot {
-		mi.Hide()
-	}
 	a.mSignIn.Show()
 	a.mSignOut.Hide()
-	a.mApps.Hide()
-	a.mStatus.SetTitle(T.SessionExpired)
+	a.syncConnPrompt()
+	a.updateStatus()
+}
+
+// syncConnPrompt shows the "sign in to see My Connections" line while there is
+// no session and nothing cached to list, and hides it otherwise.
+func (a *app) syncConnPrompt() {
+	if a.mConnSignIn == nil {
+		return
+	}
+	a.mu.Lock()
+	hide := a.tokens != nil
+	for _, id := range a.slotID {
+		if id != "" {
+			hide = true
+			break
+		}
+	}
+	a.mu.Unlock()
+	if hide {
+		a.mConnSignIn.Hide()
+	} else {
+		a.mConnSignIn.Show()
+	}
+}
+
+// signInThen signs the person in, once at a time, and runs next when that
+// produced a session. It is the whole of "ask for a session when something
+// needs one": the click that needs it calls this, and the action it was after
+// goes on by itself, instead of an error box and a second click.
+func (a *app) signInThen(next func()) {
+	if !a.signingIn.CompareAndSwap(false, true) {
+		return
+	}
+	defer a.signingIn.Store(false)
+	a.signIn()
+	if next != nil && a.signedIn() {
+		next()
+	}
 }
 
 func (a *app) loop(mQuit *systray.MenuItem) {
 	for {
 		select {
 		case <-a.mSignIn.ClickedCh:
-			go a.signIn()
+			go a.signInThen(nil)
 		case <-a.mSignOut.ClickedCh:
 			a.signOut()
 		case <-a.mApps.ClickedCh:
@@ -531,6 +584,11 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 // unapproved entry, or the server's reason when there is nothing to offer.
 func (a *app) offerWayThrough(entryID string, err error) {
 	switch refusalActionFor(err) {
+	case actionSignIn:
+		// The server no longer knows the person: ask for the session now, and
+		// connect again once it exists.
+		a.sessionExpired()
+		a.signInThen(func() { a.connect(entryID, true) })
 	case actionSignInFresh:
 		if !a.ask(T.FreshMFAAsk) {
 			return
@@ -681,12 +739,14 @@ func (a *app) signOut() {
 	a.mu.Unlock()
 	a.mSignIn.Show()
 	a.mSignOut.Hide()
-	a.mApps.Hide()
 	a.updateStatus()
+	a.mu.Lock()
 	for i, mi := range a.connSlot {
 		mi.Hide()
 		a.slotID[i] = ""
 	}
+	a.mu.Unlock()
+	a.syncConnPrompt()
 }
 
 func (a *app) setSignedIn(t *sso.Tokens) {
@@ -695,7 +755,7 @@ func (a *app) setSignedIn(t *sso.Tokens) {
 	a.mu.Unlock()
 	a.mSignIn.Hide()
 	a.mSignOut.Show()
-	a.mApps.Show()
+	a.syncConnPrompt()
 	a.updateStatus()
 	go a.refreshConnections()
 }
@@ -734,27 +794,44 @@ func (a *app) watchSlot(i int, mi *systray.MenuItem) {
 		id := a.slotID[i]
 		t := a.tokens
 		a.mu.Unlock()
-		if id == "" || t == nil {
+		if id == "" {
 			continue
 		}
-		a.mu.Lock()
-		st := a.lastStatus
-		a.mu.Unlock()
-		if reason := launchRefusal(st); reason != "" {
-			go a.tell(reason)
+		if t == nil {
+			// No session: that is when it is needed. Sign in, then open it.
+			go a.signInThen(func() { a.connect(id, true) })
 			continue
 		}
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			if _, err := desktoppam.Connect(ctx, a.server(), t.AccessToken, id); err != nil {
-				a.logger.Warn("tray: connect failed", zap.String("entry", id), zap.Error(err))
-				// The log is for the operator; the person who clicked needs
-				// to know why nothing opened and, where there is one, the
-				// way through.
-				a.offerWayThrough(id, err)
-			}
-		}()
+		go a.connect(id, false)
+	}
+}
+
+// connect opens one connection with the session's token. afterSignIn is set
+// when this runs right after a sign-in the click itself asked for, so a second
+// "you are not signed in" is told rather than looped on.
+func (a *app) connect(id string, afterSignIn bool) {
+	a.mu.Lock()
+	t := a.tokens
+	st := a.lastStatus
+	a.mu.Unlock()
+	if t == nil {
+		return
+	}
+	if reason := launchRefusal(st); reason != "" {
+		a.tell(reason)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, err := desktoppam.Connect(ctx, a.server(), t.AccessToken, id); err != nil {
+		a.logger.Warn("tray: connect failed", zap.String("entry", id), zap.Error(err))
+		if afterSignIn && refusalActionFor(err) == actionSignIn {
+			a.tell(desktoppam.UserMessage(err))
+			return
+		}
+		// The log is for the operator; the person who clicked needs to know
+		// why nothing opened and, where there is one, the way through.
+		a.offerWayThrough(id, err)
 	}
 }
 

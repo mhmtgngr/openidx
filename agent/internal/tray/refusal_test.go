@@ -16,7 +16,7 @@ func TestRefusalActionFor(t *testing.T) {
 	}{
 		{"stale factor offers a fresh sign-in", fmt.Errorf("%w: x", desktoppam.ErrStepUpRequired), actionSignInFresh},
 		{"unapproved entry offers a request", fmt.Errorf("%w: x", desktoppam.ErrApprovalRequired), actionRequestAccess},
-		{"an expired session is only told (the refresh signs out)", desktoppam.ErrNotSignedIn, actionTell},
+		{"an ended session signs in and connects again", desktoppam.ErrNotSignedIn, actionSignIn},
 		{"any other refusal is told", &desktoppam.Refusal{Status: 403, Code: "ztna_required_direct_reach"}, actionTell},
 		{"a network error is told", errors.New("dial tcp: refused"), actionTell},
 	}
