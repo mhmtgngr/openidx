@@ -6766,6 +6766,7 @@ const en = {
         absoluteHint: '0 = disabled. Default: 86400 (24h)',
         rememberMe: 'Remember Me Duration (seconds)',
         rememberMeHint: 'Default: 2592000 (30 days)',
+        nativeHint: 'These timeouts are for browser sessions. The desktop and mobile apps follow their own client lifetime instead: a session ends after 30 days (14 on the phone) without use, or 90 days after sign-in.',
         maxConcurrent: 'Max Concurrent Sessions',
         maxConcurrentHint: '0 = unlimited',
         strategy: 'Concurrent Session Strategy',

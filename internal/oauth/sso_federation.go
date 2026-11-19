@@ -477,7 +477,9 @@ func (s *Service) handleCallback(c *gin.Context) {
 		s.recordSessionAuthMethods(ctx, session.ID, methods)
 		s.recordSessionIdP(ctx, session.ID, idp.ID.String())
 		s.redis.Client.Set(ctx, "authcode_session:"+authCode.Code, session.ID, 5*time.Minute)
-		s.setBrowserSessionCookie(c, session.ID)
+		if s.nativeClient(ctx, originalParams["client_id"]) == nil {
+			s.setBrowserSessionCookie(c, session.ID)
+		}
 	}
 	if loginSession != "" {
 		s.redis.Client.Del(ctx, "login_session:"+loginSession)

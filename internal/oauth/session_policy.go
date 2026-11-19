@@ -23,6 +23,50 @@ type SessionPolicy struct {
 	ConcurrentSessionStrategy string `json:"concurrent_session_strategy"` // deny_new, terminate_oldest, prompt_user
 }
 
+// nativeClientSQL is the sessions-row test for "this session belongs to a
+// native, device-bound client" (the desktop tray, the phone apps): its client
+// carries a refresh-token family cap (v187), which only those clients have and
+// only a migration can set. It needs the sessions table aliased as s, so the
+// browser sweeps and the native sweep read one definition. A session with no
+// client, or one whose client is gone, is not native and keeps the browser
+// policy.
+const nativeClientSQL = `EXISTS (SELECT 1 FROM oauth_clients nc
+	WHERE nc.client_id = s.client_id AND nc.org_id = s.org_id
+	AND nc.allow_refresh_token AND nc.refresh_token_lifetime > 0 AND nc.refresh_token_max_lifetime > 0)`
+
+// NativeSession reports whether sessions of this client follow the client's own
+// lifetime instead of the browser's.
+//
+// The browser policy (idle 30 minutes, absolute 24 hours) describes a person at
+// a screen. A native client holds a device-bound refresh chain of 30 days (14 on
+// the phone) capped at 90, and touches its session only when it refreshes a
+// token, an hour apart at best: under the browser policy every one of its
+// sessions was ended thirty minutes after sign-in, before the first refresh.
+func (c *OAuthClient) NativeSession() bool {
+	return c != nil && c.AllowRefreshToken && c.RefreshTokenLifetime > 0 && c.RefreshTokenMaxLifetime > 0
+}
+
+// nativeSessionWindow is how far a native client's session slides on activity:
+// its refresh-token lifetime. A laptop that sleeps over a weekend is still
+// signed in on Monday; one idle for longer than a token may sit unused is not.
+func (c *OAuthClient) nativeSessionWindow() time.Duration {
+	return time.Duration(c.RefreshTokenLifetime) * time.Second
+}
+
+// nativeClient returns the client when sessions of clientID follow its own
+// lifetime, and nil for everything else (a browser client, an unknown client, a
+// read that failed: the browser policy is the conservative one).
+func (s *Service) nativeClient(ctx context.Context, clientID string) *OAuthClient {
+	if clientID == "" || s.clients == nil {
+		return nil
+	}
+	client, err := s.GetClient(ctx, clientID)
+	if err != nil || !client.NativeSession() {
+		return nil
+	}
+	return client
+}
+
 // DefaultSessionPolicy returns the system-wide default session policy
 func DefaultSessionPolicy() SessionPolicy {
 	return SessionPolicy{
@@ -124,6 +168,15 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 				policy.BindSessionToIP = *bindIP
 			}
 		}
+	}
+
+	// A native client's session follows the client: idle is how long one
+	// refresh token may sit unused, absolute is the family cap. The per-app
+	// timeouts above describe the application a person opens in a browser and
+	// do not apply (ReauthInterval, the step-up window, is separate and stays).
+	if client := s.nativeClient(ctx, clientID); client != nil {
+		policy.IdleTimeout = client.RefreshTokenLifetime
+		policy.AbsoluteTimeout = client.RefreshTokenMaxLifetime
 	}
 
 	return policy

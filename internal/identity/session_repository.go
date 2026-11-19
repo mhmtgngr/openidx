@@ -60,6 +60,12 @@ type SessionRepository interface {
 	// ErrSessionNotFound when the session is absent, revoked, or expired.
 	UpdateActivity(ctx context.Context, sessionID string) error
 
+	// UpdateActivityWithin is UpdateActivity with the sliding window named by
+	// the caller: a native client's session lives as long as that client's own
+	// refresh lifetime, not the browser's 24 hours. A window <= 0 is
+	// sessionSlidingWindow, which is what UpdateActivity uses.
+	UpdateActivityWithin(ctx context.Context, sessionID string, window time.Duration) error
+
 	// Terminate removes a session row (primary). Idempotent.
 	Terminate(ctx context.Context, sessionID string) error
 }
@@ -171,6 +177,14 @@ func (r *PostgresSessionRepository) Create(ctx context.Context, s *Session) erro
 
 // UpdateActivity implements SessionRepository. WRITE — primary.
 func (r *PostgresSessionRepository) UpdateActivity(ctx context.Context, sessionID string) error {
+	return r.UpdateActivityWithin(ctx, sessionID, sessionSlidingWindow)
+}
+
+// UpdateActivityWithin implements SessionRepository. WRITE — primary.
+func (r *PostgresSessionRepository) UpdateActivityWithin(ctx context.Context, sessionID string, window time.Duration) error {
+	if window <= 0 {
+		window = sessionSlidingWindow
+	}
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
@@ -185,7 +199,7 @@ func (r *PostgresSessionRepository) UpdateActivity(ctx context.Context, sessionI
 	result, err := r.db.Pool.Exec(ctx, `
 		UPDATE sessions SET last_seen_at = $2, expires_at = GREATEST(expires_at, $4)
 		WHERE id = $1 AND org_id = $3 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, sessionID, now, org.ID, now.Add(sessionSlidingWindow))
+	`, sessionID, now, org.ID, now.Add(window))
 	if err != nil {
 		return fmt.Errorf("update session activity: %w", err)
 	}

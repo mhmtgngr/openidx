@@ -43,6 +43,16 @@ func ssoSetupDB(t *testing.T) (*Service, *database.PostgresDB) {
 			revoked_at TIMESTAMPTZ,
 			auth_methods TEXT[]
 		)`,
+		// The browser-session lookup asks whether the session belongs to a
+		// native client (a refresh family cap), which is a clients' column.
+		`CREATE TABLE oauth_clients (
+			client_id VARCHAR(255) NOT NULL,
+			org_id UUID NOT NULL,
+			allow_refresh_token BOOLEAN NOT NULL DEFAULT false,
+			refresh_token_lifetime INT NOT NULL DEFAULT 86400,
+			refresh_token_max_lifetime INT,
+			PRIMARY KEY (org_id, client_id)
+		)`,
 		// Logout ends the cookie's session by revoking the refresh tokens
 		// bound to it before the row.
 		`CREATE TABLE oauth_refresh_tokens (
