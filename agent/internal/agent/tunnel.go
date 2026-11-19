@@ -278,6 +278,16 @@ func (a *Agent) applyReportResponse(body []byte) {
 	}
 }
 
+// NamesByAgent is true while this agent answers the names of tunneled
+// applications itself (its NRPT rules and loopback responder are in place and
+// verified). The doctor needs it from the service: a separate process (the
+// CLI, the tray) cannot see it and would warn about a tunnel DNS that the
+// agent has deliberately taken over.
+func (a *Agent) NamesByAgent() bool {
+	n := a.names.Load()
+	return n != nil && n.Status().State == tunnel.NamesActive
+}
+
 // TunnelStatus is the tunnel's state for the report and the tray, or nil when
 // this process supervises no tunnel (the tray's agent, or before Run).
 func (a *Agent) TunnelStatus() *tunnel.Status {

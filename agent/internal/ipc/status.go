@@ -56,6 +56,10 @@ type Status struct {
 	// Tunnel is the bundled tunneler's state as the service reports it to
 	// the server; nil from a service that supervises none (an older agent).
 	Tunnel *tunnel.Status `json:"tunnel,omitempty"`
+	// NamesByAgent is true while the service answers the names of tunneled
+	// applications itself (org setting name_resolution=agent, verified on this
+	// device). Only the service knows; the CLI doctor reads it from here.
+	NamesByAgent bool `json:"names_by_agent,omitempty"`
 	// TunnelDetail says why the tunnel is in that state, for the tray.
 	TunnelDetail string `json:"tunnel_detail,omitempty"`
 	// Unclaimed is true while no person owns the device: the tray offers

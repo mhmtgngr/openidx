@@ -65,6 +65,8 @@ func Inputs(d Deps, dir, version string) doctor.Inputs {
 		running := true
 		in.ServiceRunning = &running
 		in.AuthInvalid, in.Revoked, in.Tunnel = st.AuthInvalid, st.Revoked, st.Tunnel
+		// Only the service knows whether it answers the names itself.
+		in.NamesByAgent = st.NamesByAgent
 		if st.Tunnel != nil {
 			in.TunnelExpected = in.TunnelExpected || st.Tunnel.State != tunnel.StateOff
 		}

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/openidx/openidx/agent/internal/doctor"
-	"github.com/openidx/openidx/agent/internal/tunnel"
 )
 
 // diagnoseBudget bounds the doctor run behind a "diagnose" fleet command.
@@ -33,9 +32,7 @@ func (a *Agent) doctorInputs() doctor.Inputs {
 		ServiceRunning: &running,
 		Tunnel:         a.TunnelStatus(),
 	}
-	if n := a.names.Load(); n != nil {
-		in.NamesByAgent = n.Status().State == tunnel.NamesActive
-	}
+	in.NamesByAgent = a.NamesByAgent()
 	if cfg := a.config; cfg != nil {
 		in.AgentID = cfg.AgentID
 		in.ServerURL = cfg.ServerURL
