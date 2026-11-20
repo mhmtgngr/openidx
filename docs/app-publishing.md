@@ -2,6 +2,29 @@
 
 App Publishing lets administrators register internal web applications, auto-discover their paths and endpoints, classify each path by security level, and publish them as proxy routes with per-path authorization policies.
 
+## Dark publish (recommended)
+
+The shortest way to publish an internal web application, and the safest: **Overlay Network → Network resources → Publish an app** (or the link at the top of the App Publish page).
+
+You give a name, the address people type today (for example `https://wiki.corp.example`), and the groups who may use it. One call writes, together or not at all:
+
+- a **network resource** for that one name and port (an application of kind `network`);
+- the **assignments** (the groups you picked; an assignment is the grant, so at least one is required);
+- the **device-trust condition** (a trusted device is required unless you untick the box).
+
+Nothing is opened to the internet: no proxy route, no BrowZer flag and no public host is created. The application is reachable only through the OpenIDX agent's tunnel, by the people it was assigned to. It appears in their **My Apps & Network** page with an *Open* button; people who were not given it do not see it.
+
+What the dialog tells you after publishing is what this installation actually enforces. Two gates decide whether "only these people, from a trusted device" is true:
+
+| Setting | When it is off |
+|---|---|
+| `ACCESS_ASSIGNMENT_ENFORCE` | An assignment is a catalogue entry, not a grant: every enrolled device can still reach the application. The dialog says so. |
+| `POSTURE_DEVICE_TRUST_GATE` | A device that fails the security checks is still allowed in: the trusted-device setting has no effect. The dialog says so and names the gate's value. |
+
+Turn them on with `docs/runbooks/enforce-rollout.md` before relying on a published application being private.
+
+A name and port that is already published in the organization is refused, and an address that points at the platform itself (the controller, the routers, loopback, metadata addresses) is refused with the reason. The detailed network-resource form and the CSV import are still there for networks, CIDRs, several ports or UDP.
+
 ## Overview
 
 Publishing an internal app through OpenIDX follows five progressive security levels:

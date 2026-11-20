@@ -506,6 +506,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/network-resources", adminOnly, svc.handleListNetworkResources)
 		api.POST("/network-resources", adminOnly, svc.handleCreateNetworkResource)
 		api.POST("/network-resources/import", adminOnly, svc.handleImportNetworkResources)
+		api.POST("/network-resources/publish", adminOnly, svc.handlePublishDarkApp)
 		api.GET("/resources/:id/network-target", adminOnly, svc.handleGetNetworkTarget)
 		api.PUT("/resources/:id/network-target", adminOnly, svc.handlePutNetworkTarget)
 		api.DELETE("/resources/:id/network-target", adminOnly, svc.handleDeleteNetworkTarget)

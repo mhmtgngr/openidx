@@ -160,6 +160,29 @@ describe('MyNetworkPage', () => {
     expect(screen.getByText(/not published yet/i)).toBeInTheDocument()
   })
 
+  it('lists an app reached through the agent with what the person needs to know', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.includes('my/resources')) {
+        return Promise.resolve({
+          resources: [{
+            id: 'dark-1', name: 'Wiki', kind: 'web', from: 'Your device (OpenIDX agent)', to: 'wiki.corp.example', port: 443,
+            how: 'agent', status: 'ready',
+            action: { label: 'Open', kind: 'open_url', url: 'https://wiki.corp.example/' },
+            note: 'Opens through the OpenIDX agent on this device. Keep the agent running.',
+          }],
+          summary: { total: 1, ready: 1 },
+        })
+      }
+      if (url.includes('/my/ziti/services')) return Promise.resolve({ linked: false, enrolled: false, services: [] })
+      return Promise.resolve({ applications: [] })
+    })
+    render(<MyNetworkPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('Wiki')).toBeInTheDocument()
+    expect(screen.getByText('Your device (OpenIDX agent)')).toBeInTheDocument()
+    expect(screen.getByText(/keep the agent running/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open' })).toBeEnabled()
+  })
+
   it('shows how many resources are ready to use', async () => {
     render(<MyNetworkPage />, { wrapper: createWrapper() })
     expect(await screen.findByText(/2 ready to use/i)).toBeInTheDocument()

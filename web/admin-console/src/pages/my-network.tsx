@@ -42,7 +42,7 @@ interface MyResource {
   from: string
   to: string
   port: number
-  how: 'browser' | 'broker'
+  how: 'browser' | 'broker' | 'agent'
   status: 'ready' | 'request_access' | 'needs_setup'
   action: ResourceAction
   note?: string

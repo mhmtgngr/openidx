@@ -204,4 +204,25 @@ describe('NetworkResourcesPanel', () => {
       expect(api.put).toHaveBeenCalledWith('/api/v1/access/network-policy', { tunnel_scope: 'off' }),
     )
   })
+  it('opens the publish dialog from the button', async () => {
+    render(<NetworkResourcesPanel />, { wrapper: wrapper() })
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish an app' }))
+    expect(await screen.findByLabelText('Address')).toBeInTheDocument()
+  })
+
+  it('opens the publish dialog straight away on ?publish=1', async () => {
+    window.history.pushState({}, '', '/ziti-network?tab=network-resources&publish=1')
+    try {
+      render(<NetworkResourcesPanel />, { wrapper: wrapper() })
+      expect(await screen.findByLabelText('Address')).toBeInTheDocument()
+    } finally {
+      window.history.pushState({}, '', '/')
+    }
+  })
+
+  it('keeps the dialog closed without it', async () => {
+    render(<NetworkResourcesPanel />, { wrapper: wrapper() })
+    await screen.findByRole('button', { name: 'Publish an app' })
+    expect(screen.queryByLabelText('Address')).toBeNull()
+  })
 })

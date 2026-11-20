@@ -238,6 +238,18 @@ func (s *Service) createNetworkResource(ctx context.Context, orgID, name, descri
 		return "", err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	id, err := s.createNetworkResourceTx(ctx, tx, orgID, name, description, target)
+	if err != nil {
+		return "", err
+	}
+	return id, tx.Commit(ctx)
+}
+
+// createNetworkResourceTx is the body of createNetworkResource inside a
+// transaction the caller owns, so a caller that writes more rows with the
+// resource (dark publish: its assignments and its device-trust condition) can
+// commit them together or not at all.
+func (s *Service) createNetworkResourceTx(ctx context.Context, tx pgx.Tx, orgID, name, description string, target *NetworkTarget) (string, error) {
 	id := uuid.New().String()
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO applications (id, client_id, name, description, type, protocol, enabled, kind, org_id)
@@ -254,7 +266,7 @@ func (s *Service) createNetworkResource(ctx context.Context, orgID, name, descri
 			return "", err
 		}
 	}
-	return id, tx.Commit(ctx)
+	return id, nil
 }
 
 // handleCreateNetworkResource creates a network resource.

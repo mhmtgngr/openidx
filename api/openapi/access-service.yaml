@@ -339,6 +339,62 @@ paths:
         '400': { description: The name is missing or the target does not validate; the message names the value }
         '403': { description: Not an admin, or no organization context }
 
+  /api/v1/access/network-resources/publish:
+    post:
+      tags: [Network Resources]
+      summary: Publish a dark application
+      description: >-
+        Admin only. Publishes an internal web application in one step and
+        writes, in a single transaction, the network resource (one DNS name or
+        IP and one tcp port, read from the address), the assignments (a group
+        or user list; at least one is required, the assignment is the grant)
+        and the device-trust condition (required unless
+        require_trusted_device is false). The result is DARK: no proxy route,
+        no BrowZer flag and no public host is created, so the application is
+        reachable only through the agent's tunnel by the people it is assigned
+        to. Every group and user must belong to the caller's organization. A
+        name and port already published in the organization is refused. The
+        response says what the installation actually enforces, so a caller
+        never claims "only these people" where assignment or device trust is
+        not enforced.
+      operationId: publishDarkApp
+      x-openidx-handler: internal/access.(*Service).handlePublishDarkApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, address]
+              properties:
+                name: { type: string, maxLength: 255 }
+                description: { type: string }
+                address:
+                  type: string
+                  description: >-
+                    The address people type today: https://wiki.corp.example,
+                    wiki.corp.example:8443 or an IP literal. http or https; the
+                    port defaults to the scheme's. No wildcard, no credentials.
+                site: { type: string, description: Site slug; empty is the default site }
+                group_ids: { type: array, items: { type: string, format: uuid } }
+                user_ids: { type: array, items: { type: string, format: uuid } }
+                require_trusted_device: { type: boolean, default: true }
+      responses:
+        '201':
+          description: Published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DarkPublishResult'
+        '400':
+          description: >-
+            code is one of invalid_request, invalid_name, invalid_address,
+            target_refused (the platform's own addresses and the like),
+            assignee_required, unknown_group, unknown_user, unknown_site
+        '403': { description: Not an admin, or no organization context }
+        '409': { description: code already_published; the name and port are taken in this organization }
+        '503': { description: The platform denylist is incomplete; try again once the Ziti controller is reachable }
+
   /api/v1/access/network-resources/import:
     post:
       tags: [Network Resources]
@@ -11271,6 +11327,24 @@ components:
         is_default: { type: boolean }
         routers: { type: integer, description: Routers recorded in the site (list only) }
         created_at: { type: string, format: date-time }
+    DarkPublishResult:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        service_name: { type: string }
+        url: { type: string, description: The address a person opens, through the agent }
+        target:
+          $ref: '#/components/schemas/NetworkTarget'
+        groups: { type: integer }
+        users: { type: integer }
+        require_trusted_device: { type: boolean }
+        enforcement:
+          type: object
+          description: What this installation enforces right now.
+          properties:
+            assignment: { type: boolean, description: false means every enrolled device can still reach it }
+            device_trust: { type: string, description: 'the posture device-trust gate: off, observe or enforce' }
     NetworkResource:
       type: object
       properties:
