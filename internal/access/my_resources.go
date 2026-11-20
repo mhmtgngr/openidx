@@ -22,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -41,6 +42,9 @@ const (
 	// reachBroker: rendered in the browser by the session broker (Guacamole),
 	// so RDP/SSH also need no local client.
 	reachBroker = "broker"
+	// reachAgent: a dark application (published with dark publish). It has no
+	// public address at all; it opens through the OpenIDX agent on this device.
+	reachAgent = "agent"
 )
 
 // Statuses. Every non-ready status MUST carry an action the user can take
@@ -116,6 +120,7 @@ func (s *Service) handleMyResources(c *gin.Context) {
 	resources := make([]MyResource, 0, 16)
 	resources = append(resources, s.browserResources(ctx, org.ID, c)...)
 	resources = append(resources, s.brokeredResources(ctx, org.ID, userID, c)...)
+	resources = append(resources, s.agentResources(ctx, org.ID, userID)...)
 
 	// Stable, human ordering: ready things first, then by name.
 	sort.SliceStable(resources, func(i, j int) bool {
@@ -139,6 +144,61 @@ func (s *Service) handleMyResources(c *gin.Context) {
 			"ready": ready,
 		},
 	})
+}
+
+// agentResources lists the dark applications the user was given: network
+// resources with an address to open, reachable only through the OpenIDX agent's
+// tunnel. Who "was given" one is the same question the overlay asks when it
+// puts the #app-<id> marker on the person's devices (appaccess.AppsForUser), so
+// this list and the Dial policy cannot disagree.
+//
+// There is no probe: the server cannot dial a dark application (that is the
+// point of it), and a click that the agent cannot carry is the agent's to
+// explain. The list is a catalogue of what a person was given, not of what a
+// gate happens to let through, so it does not change with the enforcement flags.
+func (s *Service) agentResources(ctx context.Context, orgID, userID string) []MyResource {
+	apps, err := appaccess.AppsForUser(ctx, s.db, userID, orgID)
+	if err != nil {
+		s.logger.Error("my-resources: assigned apps failed", zap.Error(err))
+		return nil
+	}
+	if len(apps) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(apps))
+	for _, a := range apps {
+		ids = append(ids, a.ID)
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT a.id::text, a.name, a.base_url,
+		       COALESCE(NULLIF(nt.dns_names[1], ''), nt.hosts[1], ''),
+		       COALESCE((nt.port_ranges->0->>'low')::int, 0)
+		  FROM applications a JOIN network_targets nt ON nt.application_id = a.id
+		 WHERE a.org_id = $1 AND a.kind = 'network' AND COALESCE(a.enabled, true)
+		   AND COALESCE(a.base_url, '') <> '' AND a.id = ANY($2::uuid[])
+		 ORDER BY a.name`, orgID, ids)
+	if err != nil {
+		s.logger.Error("my-resources: agent query failed", zap.Error(err))
+		return nil
+	}
+	defer rows.Close()
+	var out []MyResource
+	for rows.Next() {
+		var r MyResource
+		var baseURL string
+		if err := rows.Scan(&r.ID, &r.Name, &baseURL, &r.To, &r.Port); err != nil {
+			s.logger.Warn("my-resources: agent scan failed", zap.Error(err))
+			continue
+		}
+		r.Kind = resourceKindWeb
+		r.From = "Your device (OpenIDX agent)"
+		r.How = reachAgent
+		r.Status = statusReady
+		r.Action = MyResourceAction{Label: "Open", Kind: "open_url", URL: baseURL}
+		r.Note = "Opens through the OpenIDX agent on this device. Keep the agent running."
+		out = append(out, r)
+	}
+	return out
 }
 
 // browserResources lists web apps the user can open straight from the browser.
