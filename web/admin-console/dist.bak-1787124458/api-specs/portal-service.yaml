@@ -1,0 +1,378 @@
+openapi: 3.0.3
+info:
+  title: OpenIDX Self-Service Portal
+  description: Self-service portal for application access, group membership requests, and access overview.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8001
+    description: Local development (hosted inside identity-service)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Self-Service Portal
+
+paths:
+  /api/v1/identity/portal/applications:
+    get:
+      tags: [Self-Service Portal]
+      summary: List my applications
+      operationId: listMyApplications
+      responses:
+        '200':
+          description: Applications the current user has access to
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PortalApplication'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/identity/portal/groups/available:
+    get:
+      tags: [Self-Service Portal]
+      summary: List available groups to join
+      operationId: listAvailableGroups
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Groups available for the user to request membership
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AvailableGroup'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/identity/portal/groups/request:
+    post:
+      tags: [Self-Service Portal]
+      summary: Request to join a group
+      operationId: requestGroupJoin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [group_id, reason]
+              properties:
+                group_id:
+                  type: string
+                  format: uuid
+                reason:
+                  type: string
+      responses:
+        '201':
+          description: Group join request created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupJoinRequest'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Request already exists or user is already a member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/identity/portal/groups/requests:
+    get:
+      tags: [Self-Service Portal]
+      summary: Get my group join requests
+      operationId: getMyGroupJoinRequests
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, denied]
+      responses:
+        '200':
+          description: List of group join requests
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GroupJoinRequest'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/identity/portal/access-overview:
+    get:
+      tags: [Self-Service Portal]
+      summary: Get my access overview
+      operationId: getMyAccessOverview
+      responses:
+        '200':
+          description: Overview of current user access including groups, roles, and applications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessOverview'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/identity/portal/groups/requests/{id}/review:
+    post:
+      tags: [Self-Service Portal]
+      summary: Review a group join request (admin only)
+      operationId: reviewGroupJoinRequest
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, denied]
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Request reviewed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupJoinRequest'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - admin privileges required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Request not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        status:
+          type: integer
+
+    PortalApplication:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        url:
+          type: string
+        icon_url:
+          type: string
+        last_accessed:
+          type: string
+          format: date-time
+
+    AvailableGroup:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        member_count:
+          type: integer
+        requires_approval:
+          type: boolean
+
+    GroupJoinRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        group_name:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, denied]
+        reviewer_id:
+          type: string
+          format: uuid
+        review_reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        reviewed_at:
+          type: string
+          format: date-time
+
+    AccessOverview:
+      type: object
+      properties:
+        groups:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              description:
+                type: string
+              joined_at:
+                type: string
+                format: date-time
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              description:
+                type: string
+              assigned_at:
+                type: string
+                format: date-time
+        applications:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              url:
+                type: string
+              last_accessed:
+                type: string
+                format: date-time
+        pending_requests:
+          type: integer

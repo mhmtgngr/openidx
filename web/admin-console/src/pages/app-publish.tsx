@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -365,6 +366,12 @@ export function AppPublishPage() {
             {t('nav.items.appPublish')}
           </h1>
           <p className="text-muted-foreground mt-1">{t('pages.appPublish.subtitle')}</p>
+          <p className="text-sm mt-2">
+            {t('pages.appPublish.darkPublishHint')}{' '}
+            <Link className="text-primary underline" to="/ziti-network?tab=network-resources&publish=1">
+              {t('pages.appPublish.darkPublishLink')}
+            </Link>
+          </p>
         </div>
       </div>
 

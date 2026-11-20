@@ -1,0 +1,1201 @@
+openapi: 3.0.3
+info:
+  title: OpenIDX Identity Service
+  description: User, group, role, MFA, and identity provider management.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8001
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Users
+  - name: Self-Service
+  - name: Groups
+  - name: Roles
+  - name: Permissions
+  - name: Sessions
+  - name: Identity Providers
+  - name: MFA - TOTP
+  - name: MFA - WebAuthn
+  - name: MFA - Push
+  - name: Public
+
+paths:
+  # --- Public (no auth) ---
+  /api/v1/identity/users/forgot-password:
+    post:
+      tags: [Public]
+      summary: Request password reset
+      operationId: forgotPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Reset email sent (always returns 200 to prevent enumeration)
+
+  /api/v1/identity/users/reset-password:
+    post:
+      tags: [Public]
+      summary: Reset password with token
+      operationId: resetPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 12
+      responses:
+        '200':
+          description: Password reset successful
+        '400':
+          description: Invalid or expired token
+
+  # --- Self-service ---
+  /api/v1/identity/users/me:
+    get:
+      tags: [Self-Service]
+      summary: Get current user profile
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+    put:
+      tags: [Self-Service]
+      summary: Update current user profile
+      operationId: updateCurrentUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: Profile updated
+
+  /api/v1/identity/users/me/change-password:
+    post:
+      tags: [Self-Service]
+      summary: Change own password
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 12
+      responses:
+        '200':
+          description: Password changed
+        '400':
+          description: Password does not meet policy
+
+  /api/v1/identity/users/me/mfa/setup:
+    post:
+      tags: [Self-Service]
+      summary: Setup MFA for current user
+      operationId: setupMFA
+      responses:
+        '200':
+          description: MFA setup data (QR code, secret)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret:
+                    type: string
+                  qr_code_url:
+                    type: string
+
+  /api/v1/identity/users/me/mfa/enable:
+    post:
+      tags: [Self-Service]
+      summary: Enable MFA with verification code
+      operationId: enableMFA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: MFA enabled, returns backup codes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  backup_codes:
+                    type: array
+                    items:
+                      type: string
+
+  /api/v1/identity/users/me/mfa/disable:
+    post:
+      tags: [Self-Service]
+      summary: Disable MFA for current user
+      operationId: disableMFA
+      responses:
+        '200':
+          description: MFA disabled
+
+  # --- User Management ---
+  /api/v1/identity/users:
+    get:
+      tags: [Users]
+      summary: List users
+      operationId: listUsers
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of users
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+    post:
+      tags: [Users]
+      summary: Create a user
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /api/v1/identity/users/search:
+    get:
+      tags: [Users]
+      summary: Search users
+      operationId: searchUsers
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+
+  /api/v1/identity/users/export:
+    get:
+      tags: [Users]
+      summary: Export users as CSV
+      operationId: exportUsersCSV
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+
+  /api/v1/identity/users/import:
+    post:
+      tags: [Users]
+      summary: Import users from CSV
+      operationId: importUsersCSV
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Import result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imported:
+                    type: integer
+                  errors:
+                    type: integer
+
+  /api/v1/identity/users/{id}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      operationId: getUser
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+    put:
+      tags: [Users]
+      summary: Update user
+      operationId: updateUser
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: User updated
+    delete:
+      tags: [Users]
+      summary: Delete user
+      operationId: deleteUser
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: User deleted
+        '404':
+          description: User not found
+
+  # --- User Roles ---
+  /api/v1/identity/users/{id}/roles:
+    get:
+      tags: [Roles]
+      summary: Get roles assigned to a user
+      operationId: getUserRoles
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: List of roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Role'
+    post:
+      tags: [Roles]
+      summary: Assign role to user
+      operationId: assignUserRole
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_id]
+              properties:
+                role_id:
+                  type: string
+      responses:
+        '200':
+          description: Role assigned
+    put:
+      tags: [Roles]
+      summary: Replace all user roles
+      operationId: updateUserRoles
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Roles updated
+
+  /api/v1/identity/users/{id}/roles/{roleId}:
+    delete:
+      tags: [Roles]
+      summary: Remove role from user
+      operationId: removeUserRole
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: roleId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Role removed
+
+  # --- Sessions ---
+  /api/v1/identity/users/{id}/sessions:
+    get:
+      tags: [Sessions]
+      summary: Get user sessions
+      operationId: getUserSessions
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Session'
+
+  /api/v1/identity/sessions/{id}:
+    delete:
+      tags: [Sessions]
+      summary: Terminate a session
+      operationId: terminateSession
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Session terminated
+
+  # --- Roles ---
+  /api/v1/identity/roles:
+    get:
+      tags: [Roles]
+      summary: List roles
+      operationId: listRoles
+      responses:
+        '200':
+          description: List of roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Role'
+    post:
+      tags: [Roles]
+      summary: Create role
+      operationId: createRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleCreate'
+      responses:
+        '201':
+          description: Role created
+
+  /api/v1/identity/roles/{id}:
+    get:
+      tags: [Roles]
+      summary: Get role
+      operationId: getRole
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Role details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+    put:
+      tags: [Roles]
+      summary: Update role
+      operationId: updateRole
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleCreate'
+      responses:
+        '200':
+          description: Role updated
+    delete:
+      tags: [Roles]
+      summary: Delete role
+      operationId: deleteRole
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Role deleted
+
+  # --- Permissions ---
+  /api/v1/identity/permissions:
+    get:
+      tags: [Permissions]
+      summary: List all permissions
+      operationId: listPermissions
+      responses:
+        '200':
+          description: List of permissions
+
+  /api/v1/identity/roles/{id}/permissions:
+    get:
+      tags: [Permissions]
+      summary: Get role permissions
+      operationId: getRolePermissions
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Permissions for the role
+    put:
+      tags: [Permissions]
+      summary: Set role permissions
+      operationId: setRolePermissions
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                permission_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Permissions updated
+
+  # --- Groups ---
+  /api/v1/identity/groups:
+    get:
+      tags: [Groups]
+      summary: List groups
+      operationId: listGroups
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of groups
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Group'
+    post:
+      tags: [Groups]
+      summary: Create group
+      operationId: createGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupCreate'
+      responses:
+        '201':
+          description: Group created
+
+  /api/v1/identity/groups/{id}:
+    get:
+      tags: [Groups]
+      summary: Get group
+      operationId: getGroup
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Group details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+    put:
+      tags: [Groups]
+      summary: Update group
+      operationId: updateGroup
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupCreate'
+      responses:
+        '200':
+          description: Group updated
+    delete:
+      tags: [Groups]
+      summary: Delete group
+      operationId: deleteGroup
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Group deleted
+
+  /api/v1/identity/groups/{id}/members:
+    get:
+      tags: [Groups]
+      summary: Get group members
+      operationId: getGroupMembers
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: List of members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+    post:
+      tags: [Groups]
+      summary: Add member to group
+      operationId: addGroupMember
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id:
+                  type: string
+      responses:
+        '200':
+          description: Member added
+
+  /api/v1/identity/groups/{id}/members/{userId}:
+    delete:
+      tags: [Groups]
+      summary: Remove member from group
+      operationId: removeGroupMember
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Member removed
+
+  /api/v1/identity/groups/{id}/subgroups:
+    get:
+      tags: [Groups]
+      summary: Get subgroups
+      operationId: getSubgroups
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: List of subgroups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Group'
+
+  # --- Identity Providers ---
+  /api/v1/identity/providers:
+    get:
+      tags: [Identity Providers]
+      summary: List identity providers
+      operationId: listIdentityProviders
+      responses:
+        '200':
+          description: List of IdPs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IdentityProvider'
+    post:
+      tags: [Identity Providers]
+      summary: Create identity provider
+      operationId: createIdentityProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityProviderCreate'
+      responses:
+        '201':
+          description: Provider created
+
+  /api/v1/identity/providers/{id}:
+    get:
+      tags: [Identity Providers]
+      summary: Get identity provider
+      operationId: getIdentityProvider
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Provider details
+    put:
+      tags: [Identity Providers]
+      summary: Update identity provider
+      operationId: updateIdentityProvider
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityProviderCreate'
+      responses:
+        '200':
+          description: Provider updated
+    delete:
+      tags: [Identity Providers]
+      summary: Delete identity provider
+      operationId: deleteIdentityProvider
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Provider deleted
+
+  # --- MFA TOTP ---
+  /api/v1/identity/mfa/totp/setup:
+    post:
+      tags: [MFA - TOTP]
+      summary: Setup TOTP
+      operationId: setupTOTP
+      responses:
+        '200':
+          description: TOTP secret and QR code URL
+
+  /api/v1/identity/mfa/totp/enroll:
+    post:
+      tags: [MFA - TOTP]
+      summary: Enroll TOTP with verification
+      operationId: enrollTOTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: TOTP enrolled
+
+  /api/v1/identity/mfa/totp/verify:
+    post:
+      tags: [MFA - TOTP]
+      summary: Verify TOTP code
+      operationId: verifyTOTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Code valid
+        '401':
+          description: Code invalid
+
+  /api/v1/identity/mfa/totp/status:
+    get:
+      tags: [MFA - TOTP]
+      summary: Get TOTP enrollment status
+      operationId: getTOTPStatus
+      responses:
+        '200':
+          description: TOTP status
+
+  /api/v1/identity/mfa/totp:
+    delete:
+      tags: [MFA - TOTP]
+      summary: Disable TOTP
+      operationId: disableTOTP
+      responses:
+        '200':
+          description: TOTP disabled
+
+  /api/v1/identity/mfa/backup/generate:
+    post:
+      tags: [MFA - TOTP]
+      summary: Generate backup codes
+      operationId: generateBackupCodes
+      responses:
+        '200':
+          description: New backup codes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  codes:
+                    type: array
+                    items:
+                      type: string
+
+  /api/v1/identity/mfa/backup/verify:
+    post:
+      tags: [MFA - TOTP]
+      summary: Verify a backup code
+      operationId: verifyBackupCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Code valid
+        '401':
+          description: Code invalid
+
+  /api/v1/identity/mfa/backup/count:
+    get:
+      tags: [MFA - TOTP]
+      summary: Get remaining backup codes count
+      operationId: getBackupCodeCount
+      responses:
+        '200':
+          description: Count of remaining codes
+
+  # --- MFA WebAuthn ---
+  /api/v1/identity/mfa/webauthn/register/begin:
+    post:
+      tags: [MFA - WebAuthn]
+      summary: Begin WebAuthn registration
+      operationId: beginWebAuthnRegistration
+      responses:
+        '200':
+          description: WebAuthn credential creation options
+
+  /api/v1/identity/mfa/webauthn/register/finish:
+    post:
+      tags: [MFA - WebAuthn]
+      summary: Complete WebAuthn registration
+      operationId: finishWebAuthnRegistration
+      responses:
+        '200':
+          description: Credential registered
+
+  /api/v1/identity/mfa/webauthn/authenticate/begin:
+    post:
+      tags: [MFA - WebAuthn]
+      summary: Begin WebAuthn authentication
+      operationId: beginWebAuthnAuthentication
+      responses:
+        '200':
+          description: WebAuthn assertion options
+
+  /api/v1/identity/mfa/webauthn/authenticate/finish:
+    post:
+      tags: [MFA - WebAuthn]
+      summary: Complete WebAuthn authentication
+      operationId: finishWebAuthnAuthentication
+      responses:
+        '200':
+          description: Authentication successful
+
+  /api/v1/identity/mfa/webauthn/credentials:
+    get:
+      tags: [MFA - WebAuthn]
+      summary: List WebAuthn credentials
+      operationId: getWebAuthnCredentials
+      responses:
+        '200':
+          description: List of registered credentials
+
+  /api/v1/identity/mfa/webauthn/credentials/{credential_id}:
+    delete:
+      tags: [MFA - WebAuthn]
+      summary: Delete WebAuthn credential
+      operationId: deleteWebAuthnCredential
+      parameters:
+        - name: credential_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Credential deleted
+
+  # --- MFA Push ---
+  /api/v1/identity/mfa/push/register:
+    post:
+      tags: [MFA - Push]
+      summary: Register push MFA device
+      operationId: registerPushDevice
+      responses:
+        '200':
+          description: Device registered
+
+  /api/v1/identity/mfa/push/devices:
+    get:
+      tags: [MFA - Push]
+      summary: List push MFA devices
+      operationId: getPushDevices
+      responses:
+        '200':
+          description: List of devices
+
+  /api/v1/identity/mfa/push/devices/{device_id}:
+    delete:
+      tags: [MFA - Push]
+      summary: Delete push MFA device
+      operationId: deletePushDevice
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Device deleted
+
+  /api/v1/identity/mfa/push/challenge:
+    post:
+      tags: [MFA - Push]
+      summary: Create push challenge
+      operationId: createPushChallenge
+      responses:
+        '200':
+          description: Challenge created
+
+  /api/v1/identity/mfa/push/verify:
+    post:
+      tags: [MFA - Push]
+      summary: Verify push challenge
+      operationId: verifyPushChallenge
+      responses:
+        '200':
+          description: Challenge verified
+
+  /api/v1/identity/mfa/push/challenge/{challenge_id}:
+    get:
+      tags: [MFA - Push]
+      summary: Get push challenge status
+      operationId: getPushChallenge
+      parameters:
+        - name: challenge_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Challenge status
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        enabled:
+          type: boolean
+        email_verified:
+          type: boolean
+        mfa_enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UserCreate:
+      type: object
+      required: [username, email, first_name, last_name]
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        password:
+          type: string
+          minLength: 12
+        enabled:
+          type: boolean
+          default: true
+
+    UserUpdate:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        enabled:
+          type: boolean
+
+    Role:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        composite:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    RoleCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    Group:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        parent_id:
+          type: string
+        member_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    GroupCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parent_id:
+          type: string
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    IdentityProvider:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider_type:
+          type: string
+          enum: [oidc, saml]
+        issuer_url:
+          type: string
+        client_id:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+
+    IdentityProviderCreate:
+      type: object
+      required: [name, provider_type, client_id]
+      properties:
+        name:
+          type: string
+        provider_type:
+          type: string
+          enum: [oidc, saml]
+        issuer_url:
+          type: string
+        client_id:
+          type: string
+        client_secret:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean

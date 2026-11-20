@@ -15,6 +15,7 @@ import { LoadingSpinner } from './ui/loading-spinner'
 import { QueryError } from './query-error'
 import { ConfirmAction } from './confirm-action'
 import { ManageAppAccessDialog } from './manage-app-access-dialog'
+import { PublishAppDialog } from './publish-app-dialog'
 import { useToast } from '../hooks/use-toast'
 import { api } from '../lib/api'
 import { SiteSelect } from './site-select'
@@ -273,6 +274,12 @@ export function NetworkResourcesPanel() {
   const [editing, setEditing] = useState<{ id: string | null; name: string; description: string; draft: TargetDraft } | null>(null)
   const [formError, setFormError] = useState('')
   const [access, setAccess] = useState<NetworkResource | null>(null)
+  // "Publish an app" is the short path; ?publish=1 opens it straight away (the
+  // App Publish page links here), read from the address bar so the panel needs
+  // no router of its own.
+  const [publishing, setPublishing] = useState(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('publish') === '1',
+  )
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['network-resources'] })
   const saveMutation = useMutation({
@@ -322,16 +329,22 @@ export function NetworkResourcesPanel() {
               <Network className="h-4 w-4" />
               {t('pages.networkResources.title')}
             </span>
-            <Button
-              size="sm"
-              onClick={() => {
-                setFormError('')
-                setEditing({ id: null, name: '', description: '', draft: EMPTY_DRAFT })
-              }}
-            >
-              <Plus className="mr-1.5 h-4 w-4" />
-              {t('pages.networkResources.add')}
-            </Button>
+            <span className="flex items-center gap-2">
+              <Button size="sm" onClick={() => setPublishing(true)}>
+                <Plus className="mr-1.5 h-4 w-4" />
+                {t('pages.networkResources.publish.button')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setFormError('')
+                  setEditing({ id: null, name: '', description: '', draft: EMPTY_DRAFT })
+                }}
+              >
+                {t('pages.networkResources.add')}
+              </Button>
+            </span>
           </CardTitle>
           <CardDescription>{t('pages.networkResources.subtitle')}</CardDescription>
         </CardHeader>
@@ -473,6 +486,8 @@ export function NetworkResourcesPanel() {
           )}
         </DialogContent>
       </Dialog>
+
+      <PublishAppDialog open={publishing} onOpenChange={setPublishing} onPublished={invalidate} />
 
       {access && (
         <ManageAppAccessDialog
