@@ -1,1 +1,0 @@
-import{t as e}from"./createLucideIcon--NqhlDQ6.js";var t=e(`infinity`,[[`path`,{d:`M6 16c5 0 7-8 12-8a4 4 0 0 1 0 8c-5 0-7-8-12-8a4 4 0 1 0 0 8`,key:`18ogeb`}]]),n=e(`mouse-pointer-2`,[[`path`,{d:`M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z`,key:`edeuup`}]]);export{t as n,n as t};
