@@ -39,3 +39,4 @@ What becomes easier, what becomes harder, and what we now will not do.
 |-----|-------|--------|
 | [0001](0001-product-focus-and-trusted-core.md) | Product focus, the Trusted Core milestone, and freezing the global-scale programme | Accepted |
 | [0002](0002-third-party-access-and-temporary-privilege.md) | Third-party access as a sponsored, expiring identity, and one framework for temporary privilege | Proposed |
+| [0004](0004-native-clients-beside-guacamole.md) | Native clients for privileged sessions: a launcher beside Guacamole, not a replacement | Proposed |
