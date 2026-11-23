@@ -9,6 +9,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { Badge } from '../components/ui/badge'
 import { Checkbox } from '../components/ui/checkbox'
@@ -86,6 +87,17 @@ const emptyForm: PamEntryInput = {
   // file transfer: the server's defaults, sent so the form shows them.
   rdp_cert_mode: 'verify', rdp_cert_fingerprints: [],
   allow_copy: true, allow_paste: true, allow_file_transfer: false,
+}
+
+// FileReader rather than File.text(): same result, and it exists everywhere the
+// console runs (including the test DOM).
+function readFileText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
 }
 
 export function PamConnectionsPage() {
@@ -1171,11 +1183,28 @@ export function PamConnectionsPage() {
                 <strong>{t('pages.pamConnections.importDialog.instructionsFormat')}</strong>
                 {t('pages.pamConnections.importDialog.instructionsAfter')}
               </p>
+              <div className="space-y-1">
+                <Label htmlFor="rdm-import-file">{t('pages.pamConnections.importDialog.file')}</Label>
+                <Input
+                  id="rdm-import-file"
+                  type="file"
+                  accept=".rdm,.xml,.json,text/xml,application/json"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    if (file) setImportData(await readFileText(file))
+                  }}
+                />
+                {importData && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('pages.pamConnections.importDialog.loaded', { kb: Math.max(1, Math.round(importData.length / 1024)) })}
+                  </p>
+                )}
+              </div>
               <Textarea
                 value={importData}
                 onChange={(e) => setImportData(e.target.value)}
-                placeholder='{"Connections":[ … ]}'
-                rows={10}
+                placeholder={t('pages.pamConnections.importDialog.placeholder')}
+                rows={6}
                 className="font-mono text-xs"
               />
               <DialogFooter>

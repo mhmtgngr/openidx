@@ -72,12 +72,17 @@ type rdmImportItem struct {
 	Preserved   map[string]interface{} // full original object, password keys scrubbed
 }
 
-// parseRDMExport accepts the shapes RDM produces: {"Connections":[…]},
-// a bare array […], or a single connection object.
+// parseRDMExport accepts the shapes RDM produces: the XML export, or JSON as
+// {"Connections":[…]}, a bare array […] or a single connection object.
 func parseRDMExport(data []byte) ([]map[string]interface{}, error) {
 	data = []byte(strings.TrimSpace(string(data)))
 	if len(data) == 0 {
 		return nil, errors.New("empty import payload")
+	}
+
+	// The XML export File → Export writes by default.
+	if looksLikeXML(data) {
+		return parseRDMXML(data)
 	}
 
 	var wrapper struct {
@@ -97,7 +102,7 @@ func parseRDMExport(data []byte) ([]map[string]interface{}, error) {
 		return []map[string]interface{}{single}, nil
 	}
 
-	return nil, errors.New("unrecognized RDM export format (expected JSON with a Connections array)")
+	return nil, errors.New("unrecognized RDM export format (expected an RDM XML export or JSON with a Connections array)")
 }
 
 // rdmString pulls the first non-empty string among keys, looking at the top
