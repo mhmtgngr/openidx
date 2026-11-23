@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -181,6 +182,19 @@ describe('PamConnectionsPage', () => {
   it('renders the RDM import action', async () => {
     renderPage()
     expect(await screen.findByRole('button', { name: /import from rdm/i })).toBeInTheDocument()
+  })
+
+  it('imports an RDM export chosen as a file, XML included', async () => {
+    pam.importRDM.mockResolvedValue({ folders_created: 1, entries_created: 2, secrets_stored: 0, by_type: { rdp: 2 }, skipped: [] })
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: /import from rdm/i }))
+    const xml = '<?xml version="1.0"?><RDMExport><Connections><Connection><Name>a</Name></Connection></Connections></RDMExport>'
+    const input = await screen.findByLabelText(/export file/i)
+    await userEvent.upload(input, new File([xml], 'export.rdm', { type: 'text/xml' }))
+    expect(await screen.findByText(/Loaded 1 KB/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Import' }))
+    await waitFor(() => expect(pam.importRDM).toHaveBeenCalledWith(xml, undefined))
+    expect(await screen.findByText('Import complete')).toBeInTheDocument()
   })
 
   it('shows a reveal button only when allowed', async () => {

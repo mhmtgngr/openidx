@@ -5035,9 +5035,12 @@ const tr: typeof en = {
         instructionsBefore: 'RDM’de: ',
         instructionsExport: 'Dosya → Dışa Aktar',
         instructionsMiddle: ' → şunu seçin: ',
-        instructionsFormat: '.json',
+        instructionsFormat: '.rdm / .json',
         instructionsAfter:
-          '. Dışa aktarımı aşağıya yapıştırın. Gruplar klasöre, oturumlar/kimlik bilgileri kayda dönüşür ve parolalar kasaya mühürlenir.',
+          '. Dışa aktarılan dosyayı aşağıdan seçin (ya da yapıştırın). Gruplar klasöre, oturumlar/kimlik bilgileri kayda dönüşür; dışa aktarımda parola varsa kasaya mühürlenir.',
+        file: 'Dışa aktarım dosyası (.rdm XML veya JSON)',
+        loaded: '{{kb}} KB yüklendi. Eklemek için İçe Aktar’a basın.',
+        placeholder: 'Ya da dışa aktarımı buraya yapıştırın',
         submit: 'İçe Aktar',
       },
       revealDialog: {

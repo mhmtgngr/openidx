@@ -5043,9 +5043,12 @@ const en = {
         instructionsBefore: 'In RDM: ',
         instructionsExport: 'File → Export',
         instructionsMiddle: ' → choose ',
-        instructionsFormat: '.json',
+        instructionsFormat: '.rdm / .json',
         instructionsAfter:
-          '. Paste the export below. Groups become folders, sessions/credentials become entries, and passwords are sealed into the vault.',
+          '. Choose the exported file (or paste it) below. Groups become folders, sessions/credentials become entries, and passwords are sealed into the vault when the export carries them.',
+        file: 'Export file (.rdm XML or JSON)',
+        loaded: 'Loaded {{kb}} KB. Press Import to add it.',
+        placeholder: 'Or paste the export here',
         submit: 'Import',
       },
       revealDialog: {
