@@ -36,6 +36,7 @@ import {
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { TableSkeleton } from '../components/ui/skeleton'
 import { QueryError } from '../components/query-error'
+import { LoginAddressesSection } from '../components/login-addresses-section'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -754,6 +755,7 @@ export function UsersPage() {
                 />
               </div>
             </div>
+            {selectedUser?.id && <LoginAddressesSection userId={selectedUser.id} />}
             <div className="flex justify-end gap-2 pt-4">
               <Button
                 type="button"

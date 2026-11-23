@@ -1882,5 +1882,12 @@ func allMigrations() []*Migration {
 			UpSQL:       userMailUp,
 			DownSQL:     userMailDown,
 		},
+		{
+			Version:     266,
+			Name:        "user_login_addresses",
+			Description: "Sign-in addresses an administrator gives an account (user_login_addresses): extra addresses, unique per organization, stored trimmed and lower-cased, that a directory sync never touches (it rewrites users.mail every run) and that work for local accounts too. The sign-in lookup reads them in the same layer as users.email and users.mail, so an address naming two accounts is refused. Password reset and notifications keep using users.email. Row level security forced. Nothing is backfilled.",
+			UpSQL:       loginAddressesUp,
+			DownSQL:     loginAddressesDown,
+		},
 	}
 }

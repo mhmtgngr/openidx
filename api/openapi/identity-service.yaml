@@ -1470,6 +1470,119 @@ paths:
           description: User not found
 
   # --- User offboarding ---
+  /api/v1/identity/users/{id}/login-addresses:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Users]
+      summary: List the addresses an account signs in with (admin)
+      description: >-
+        The account's own email and the directory's mail address (read only,
+        they already work) and the addresses an administrator gave the account.
+        Admin only, scoped to the caller's organization.
+      operationId: listUserLoginAddresses
+      x-openidx-handler: internal/identity.(*Service).handleListLoginAddresses
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email: {type: string}
+                  mail: {type: string}
+                  addresses:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LoginAddress'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Users]
+      summary: Give an account a sign-in address (admin)
+      description: >-
+        The person can then sign in with this address (any letter case) and
+        their password. Stored trimmed and lower-cased. Admin only, never the
+        account holder. An address that is another account's username, email,
+        mail or address is refused with 409 address_in_use and no account is
+        named; at most 5 per account (409 too_many). Adding an address the
+        account already has answers 200. Password reset and notifications keep
+        using the account's email. Audited as user.login_address_added.
+      operationId: addUserLoginAddress
+      x-openidx-handler: internal/identity.(*Service).handleAddLoginAddress
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {type: string, maxLength: 255}
+      responses:
+        '200':
+          description: The account already had the address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginAddress'
+        '201':
+          description: Added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginAddress'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: address_in_use or too_many
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/users/{id}/login-addresses/{addrId}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+      - name: addrId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [Users]
+      summary: Remove a sign-in address from an account (admin)
+      description: The address stops signing in at once. Audited as user.login_address_removed.
+      operationId: removeUserLoginAddress
+      x-openidx-handler: internal/identity.(*Service).handleRemoveLoginAddress
+      responses:
+        '204':
+          description: Removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/identity/users/{id}/offboard:
     post:
       tags: [Users]
@@ -5713,6 +5826,13 @@ components:
         format: uuid
 
   schemas:
+    LoginAddress:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        address: {type: string}
+        created_at: {type: string, format: date-time}
+        created_by: {type: string, format: uuid, nullable: true}
     Error:
       type: object
       properties:
