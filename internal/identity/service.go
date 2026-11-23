@@ -4325,6 +4325,11 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.DELETE("/users/:id", svc.handleDeleteUser)
 		identity.POST("/users/:id/reset-password", svc.handleAdminResetPassword)
 		identity.POST("/users/:id/set-password", svc.handleAdminSetPassword)
+		// Sign-in addresses an administrator gives an account (migration 266).
+		// Admin only, on purpose: not in isIdentitySelfService.
+		identity.GET("/users/:id/login-addresses", svc.handleListLoginAddresses)
+		identity.POST("/users/:id/login-addresses", svc.handleAddLoginAddress)
+		identity.DELETE("/users/:id/login-addresses/:addrId", svc.handleRemoveLoginAddress)
 
 		// Identity Providers (for SSO) — GET /providers is public (login page needs it)
 		identity.POST("/providers", svc.handleCreateIdentityProvider)

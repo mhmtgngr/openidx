@@ -272,4 +272,30 @@ describe('UsersPage', () => {
     expect(await within(dialog).findByText(/sponsored by Selin Sponsor/)).toBeInTheDocument()
     expect(within(dialog).getByRole('link', { name: /open external users/i })).toHaveAttribute('href', '/external-users')
   })
+
+  it('lets an administrator manage sign-in addresses from the edit dialog', async () => {
+    const wrapper = createWrapper()
+    const user = userEvent.setup()
+    vi.mocked(api.getWithHeaders).mockResolvedValue({
+      data: [{
+        id: 'u9', userName: 'hana', name: { givenName: 'Hana', familyName: 'Demir' },
+        emails: [{ value: 'hana@corp.example' }], enabled: true,
+      }],
+      headers: {},
+    })
+    vi.mocked(api.get).mockImplementation(((url: string) =>
+      Promise.resolve(url === '/api/v1/identity/users/u9/login-addresses'
+        ? { email: 'hana@corp.example', mail: '', addresses: [{ id: 'a1', address: 'hana.real@company.example', created_at: '2026-11-23T10:00:00Z' }] }
+        : [])) as never)
+
+    render(<UsersPage />, { wrapper })
+    const row = (await screen.findByText('Hana Demir')).closest('tr')!
+    const trigger = within(row).getAllByRole('button').find((b) => b.getAttribute('aria-haspopup') === 'menu')!
+    await user.click(trigger)
+    await user.click(await screen.findByRole('menuitem', { name: /edit user/i }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('Sign-in addresses')).toBeInTheDocument()
+    expect(await within(dialog).findByText('hana.real@company.example')).toBeInTheDocument()
+  })
 })

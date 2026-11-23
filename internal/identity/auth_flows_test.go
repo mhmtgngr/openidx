@@ -123,7 +123,7 @@ func newAuthTestService(t *testing.T) (*Service, *database.PostgresDB, context.C
 	t.Cleanup(cleanup)
 
 	ctx := context.Background()
-	if _, err := db.Pool.Exec(ctx, authTestSchema); err != nil {
+	if _, err := db.Pool.Exec(ctx, authTestSchema+loginAddressesTestSchema); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
 	return NewService(db, nil, &config.Config{}, zap.NewNop()), db, ctx

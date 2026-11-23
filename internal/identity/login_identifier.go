@@ -30,12 +30,15 @@ var errAmbiguousLoginIdentifier = errors.New("the sign-in identifier names more 
 //     of usernames that differ only in case still sign in as themselves);
 //  1. the username, ignoring case;
 //  2. an ADDRESS, ignoring case: users.email (for a directory user whatever the
-//     attribute mapping puts there, often the UPN) or users.mail (the
+//     attribute mapping puts there, often the UPN), users.mail (the
 //     directory's mail attribute, the address a person actually uses, kept as a
-//     second sign-in address, migration 265).
+//     second sign-in address, migration 265) or an address an administrator
+//     gave the account (user_login_addresses, migration 266: the directory sync
+//     rewrites users.mail every run, so a hand-given address needs a home the
+//     sync does not own, and a local account has no directory at all).
 //
 // The order is the safety property: an account's name always beats anyone's
-// address, so an address cannot take over another account's username. The two
+// address, so an address cannot take over another account's username. The three
 // kinds of address share ONE layer, on purpose: if one account's email is
 // another account's mail (an unverified or locally provisioned email that
 // happens to be a directory person's mailbox), neither is preferred, so the
@@ -57,7 +60,8 @@ func (s *Service) resolveLoginUser(ctx context.Context, orgID, identifier string
 			SELECT id, username, 1 FROM users WHERE org_id = $2 AND lower(username) = lower($1)
 			UNION ALL
 			SELECT id, username, 2 FROM users WHERE org_id = $2
-			   AND (lower(email) = lower($1) OR (mail IS NOT NULL AND lower(mail) = lower($1)))
+			   AND (lower(email) = lower($1) OR (mail IS NOT NULL AND lower(mail) = lower($1))
+			        OR id IN (SELECT user_id FROM user_login_addresses WHERE org_id = $2 AND address = lower($1)))
 		) m
 		ORDER BY tier, username
 		LIMIT 2`, identifier, orgID)

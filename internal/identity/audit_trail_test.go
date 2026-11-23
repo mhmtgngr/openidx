@@ -173,7 +173,7 @@ func newAuditService(t *testing.T) (*Service, *database.PostgresDB, context.Cont
 	t.Cleanup(cleanup)
 
 	ctx := orgctx.With(context.Background(), orgctx.Org{ID: auditOrg})
-	if _, err := db.Pool.Exec(ctx, auditSchema); err != nil {
+	if _, err := db.Pool.Exec(ctx, auditSchema+loginAddressesTestSchema); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
 
